@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: registro-docente
+    runtime: node
+    plan: 0.5c-512mb
+    region: ohio
+    buildCommand: npm ci --include=dev && npm run typecheck && npm test && npm run build
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 24.22.1
+      - key: NODE_ENV
+        value: production
+      - key: APP_URL
+        sync: false
+      - key: APP_TIMEZONE
+        value: America/Santo_Domingo
+      - key: DATABASE_URL
+        sync: false
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+      - key: DEMO_MODE
+        value: "false"
+      - key: NEON_AUTH_BASE_URL
+        value: https://ep-curly-fire-bdxf7kuz.neonauth.c-8.us-east-2.aws.neon.tech/registro_docente/auth
+      - key: NEON_AUTH_COOKIE_SECRET
+        generateValue: true
+      - key: OWNER_EMAIL
+        sync: false
