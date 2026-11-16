@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, BookOpenCheck, Check, ClipboardList, FileText, LoaderCircle, Plus, Save, Settings2, Trash2, Upload, X } from 'lucide-react';
-import { COMPETENCY_GROUPS, type Activity, type ActivityCategoryKey, type Bootstrap, type CompetencyKey, type EvaluationCriterion, type EvaluationPlan, type EvaluationPurpose, type RubricCriterion, type RubricLevel, type SequenceActivity, type SequenceIndicator, type SequencePlan, type SourceAssessmentInstrument, type SequenceFinalAssessment } from '@/lib/model';
+import { COMPETENCY_GROUPS, type Activity, type ActivityCategoryKey, type Bootstrap, type CompetencyKey, type EvaluationCriterion, type EvaluationPlan, type EvaluationPurpose, type RubricCriterion, type RubricLevel, type SequenceActivity, type SequenceIndicator, type SequencePlan, type SourceAssessmentInstrument } from '@/lib/model';
 import { apiPost, errorText, formatDate } from '@/lib/client';
-import { proposeActivities, proposeSequenceFromPdfPages, suggestIndicatorIdsFromCompetencies } from '@/lib/sequence-import';
+import { proposeActivities, proposeSequenceFromPdfPages } from '@/lib/sequence-import';
 import { parseRubricWorkbook, type ImportedRubricCriterion } from '@/lib/rubric-import';
 
-type Section = 'all' | 'criteria' | 'sequence';
+type Section = 'all' | 'criteria' | 'indicators' | 'sequence';
 type LevelDraft = { label: string; points: number; description: string };
 type SelectedCriterionDraft = { id:string; catalogId?:string; label:string; levels:RubricLevel[]; indicatorId:string; weight:number; source:boolean };
 const LEVELS: LevelDraft[] = [
@@ -17,7 +17,6 @@ const LEVELS: LevelDraft[] = [
   { label: 'Excelente', points: 4, description: '' },
 ];
 const CATEGORY_LABELS: Record<ActivityCategoryKey, string> = { exam: 'Exámenes', participation: 'Participación y conducta', notebook: 'Libretas y tareas', sequence: 'Actividades de secuencia', homework: 'Prácticas para casa', extra: 'Puntos extra' };
-const LESSON_LABELS = { teoria: 'Teórica', practica: 'Práctica', ejercicios: 'Ejercicios', repaso: 'Repaso', correcciones: 'Correcciones', actividad_escolar: 'Actividad escolar' } as const;
 const PURPOSE_LABELS: Record<EvaluationPurpose, string> = { diagnostica: 'Diagnóstica', formativa: 'Formativa', sumativa: 'Sumativa', formativa_sumativa: 'Formativa y sumativa' };
 const newId = () => crypto.randomUUID();
 function isUnscoredDiagnostic(item: Pick<SequenceActivity, 'evaluationPurpose'|'plannedPoints'|'plannedPercent'>) {
@@ -64,6 +63,7 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
   const [title, setTitle] = useState('');
   const [activityCode, setActivityCode] = useState('');
   const [activityDate, setActivityDate] = useState(today);
+  const [activityEvidence, setActivityEvidence] = useState('');
   const [category, setCategory] = useState<ActivityCategoryKey>('sequence');
   const [maxPoints, setMaxPoints] = useState(10);
   const [sequenceDraft, setSequenceDraft] = useState<SequencePlan>(() => curriculumSequence ?? { source: 'manual', sourceName: '', sourceText: '', reviewed: false, activities: [], indicators: [] });
@@ -94,7 +94,7 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
   }, [section, criteriaLoaded]);
 
   function resetActivity() {
-    setTitle(''); setActivityCode('MANUAL'); setActivityDate(today); setCategory('sequence'); setMaxPoints(10); setActivityError('');
+    setTitle(''); setActivityCode('MANUAL'); setActivityDate(today); setActivityEvidence(''); setCategory('sequence'); setMaxPoints(10); setActivityError('');
   }
   function selectSequenceCode(id: string) {
     setActivityCode(id);
@@ -113,7 +113,7 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
       if (sourceActivity && isUnscoredDiagnostic(sourceActivity)) throw new Error('La secuencia marca esta actividad como diagnóstica sin ponderación. Consérvala en la secuencia; no la conviertas en una nota.');
       const created = await apiPost<Activity[]>('shared-activity', {
         courseIds: courses.map(course => course.id),
-        activity: { category, title: title.trim(), date: activityDate, maxPoints, sequenceCode: sourceActivity?.code ?? '', ...(sourceActivity ? { sequenceActivityId: sourceActivity.id, evidence: sourceActivity.evidence, instrument: sourceActivity.instrument ?? '', purpose: sourceActivity.evaluationPurpose ? PURPOSE_LABELS[sourceActivity.evaluationPurpose] : '' } : {}), scoringMode: 'points', rubric: [], requestId: newId() },
+        activity: { category, title: title.trim(), date: activityDate, maxPoints, evidence: activityEvidence.trim(), description: sourceActivity?.description ?? '', sequenceCode: sourceActivity?.code ?? '', ...(sourceActivity ? { sequenceActivityId: sourceActivity.id, instrument: sourceActivity.instrument ?? '', purpose: sourceActivity.evaluationPurpose ? PURPOSE_LABELS[sourceActivity.evaluationPurpose] : '' } : {}), scoringMode: 'points', rubric: [], requestId: newId() },
       });
       const first = created[0];
       setShowActivity(false);
@@ -132,20 +132,16 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
       if (!text.trim()) throw new Error('No se encontró texto seleccionable. Si el PDF es una imagen escaneada, usa la captura manual y consulta el documento mientras completas la revisión.');
       const structured = extracted.pdfSequenceProposal?.activities.length ? extracted.pdfSequenceProposal : null;
       const proposed: SequenceActivity[] = structured
-        ? structured.activities.map(item => ({ id: newId(), code: item.code, theme: item.theme, title: item.title, lessonType: null, description: '', evidence: item.evidence, indicatorIds: [], period: item.period, evaluationPurpose: item.evaluationPurpose, plannedPoints: item.plannedPoints, plannedPercent: item.plannedPercent, instrument: item.instrument, evaluationCriteria: item.evaluationCriteria, feedback: item.feedback, ...(item.assessmentInstrument ? { assessmentInstrument: item.assessmentInstrument } : {}) }))
-        : proposeActivities(text).map(item => ({ id: newId(), code: item.code, theme: '', title: item.title, lessonType: 'teoria', description: '', evidence: '', indicatorIds: [], period: '' }));
+        ? structured.activities.map(item => ({ id: newId(), code: item.code, theme: item.theme, title: item.title, lessonType: null, description: item.theme, evidence: '', indicatorIds: [], period: '', evaluationPurpose: item.evaluationPurpose, plannedPoints: item.plannedPoints, plannedPercent: item.plannedPercent, instrument: item.instrument, evaluationCriteria: item.evaluationCriteria, feedback: item.feedback, ...(item.assessmentInstrument ? { assessmentInstrument: item.assessmentInstrument } : {}) }))
+        : proposeActivities(text).map(item => ({ id: newId(), code: item.code, theme: '', title: item.title, lessonType: null, description: '', evidence: '', indicatorIds: [], period: '' }));
       const importedIndicators = structured?.indicators.map(item => ({ id: newId(), code: item.code, label: item.label, competency: item.competency })) ?? [];
-      const activitiesWithSuggestions = structured ? proposed.map((activity, index) => ({
-        ...activity,
-        indicatorIds: suggestIndicatorIdsFromCompetencies(structured.activities[index]?.assessmentInstrument?.relatedCompetencyText, importedIndicators),
-      })) : proposed;
-      setSequenceDraft({ source: 'uploaded', sourceName: file.name, sourceText: text, reviewed: false, activities: activitiesWithSuggestions, indicators: importedIndicators, ...(structured?.finalAssessment ? { finalAssessment: structured.finalAssessment } : {}) });
+      setSequenceDraft({ source: 'uploaded', sourceName: file.name, sourceText: text, reviewed: false, activePlanningPeriod: null, activities: proposed, indicators: importedIndicators, ...(structured?.finalAssessment ? { finalAssessment: structured.finalAssessment } : {}) });
       setSequenceMode('review');
-      setSequenceNotice(proposed.length ? structured ? `Extraje ${proposed.length} actividades, ${importedIndicators.length} indicadores y sus datos de evaluación. Las competencias citadas en los anexos proponen indicadores compatibles; revisa o corrige las selecciones y las competencias pendientes antes de confirmar.` : `Extraje el texto y propuse ${proposed.length} títulos numerados. Son sugerencias de formato: revisa o completa todo antes de confirmar.` : 'Extraje el texto. No detecté encabezados numerados con suficiente confianza; añade las actividades manualmente y conserva el texto como referencia.');
+      setSequenceNotice(proposed.length ? `Extraje ${proposed.length} actividades y ${importedIndicators.length} indicadores. Revisa solo el nombre y el contenido de cada actividad; los indicadores se administran aparte y no se asignan a una evaluación todavía.` : 'Extraje el texto. No detecté encabezados numerados con suficiente confianza; añade las actividades manualmente y conserva el texto como referencia.');
     } catch (error) { setSequenceError(errorText(error)); } finally { setFileBusy(false); }
   }
   function startManualSequence() {
-    setSequenceDraft({ source: 'manual', sourceName: '', sourceText: '', reviewed: false, planningMode: 'sequence', activities: [], indicators: [] });
+    setSequenceDraft({ source: 'manual', sourceName: '', sourceText: '', reviewed: false, planningMode: 'sequence', activePlanningPeriod: null, activities: [], indicators: [] });
     setSequenceError('');
     setSequenceNotice('');
     setSequenceMode('review');
@@ -161,23 +157,21 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
       onSection('all'); onChange();
     } catch (error) { setSequenceError(errorText(error)); } finally { setSequenceBusy(false); }
   }
-  async function saveSequence(reviewed: boolean) {
+  async function saveSequence(reviewed: boolean, reason?: 'indicators') {
     const wasReviewed=sequenceDraft.reviewed;
     setSequenceBusy(true); setSequenceError(''); setSequenceNotice('');
     try {
       if (reviewed) {
-        if (!sequenceDraft.indicators.length) throw new Error('Añade al menos un indicador antes de confirmar la revisión.');
-        const usedIndicatorIds = new Set(sequenceDraft.activities.flatMap(item => item.indicatorIds));
-        if (sequenceDraft.indicators.some(item => usedIndicatorIds.has(item.id) && !item.competency)) throw new Error('Asigna una competencia a cada indicador vinculado a una actividad antes de confirmar la revisión.');
-        const missing = sequenceDraft.activities.find(item => !item.title.trim() || !item.code.trim() || item.indicatorIds.length === 0);
-        if (missing) throw new Error(`Completa código e indicador de “${missing.title || 'actividad sin título'}”.`);
+        if (!sequenceDraft.activities.length) throw new Error('Añade al menos una actividad antes de confirmar la revisión.');
+        const missing = sequenceDraft.activities.find(item => !item.title.trim() || !(item.description.trim() || item.theme.trim()));
+        if (missing) throw new Error(`Completa el nombre y qué se trabajará en “${missing.title || 'la actividad'}”.`);
       }
       const saved = await apiPost<SequencePlan>('curriculum-sequence', { ...sequenceDraft, reviewed });
-      setSequenceDraft(saved); setPeriodAssignmentsDirty(false); setSequenceNotice(reviewed ? wasReviewed ? 'Distribución de períodos guardada.' : 'Revisión guardada. Distribuye la secuencia entre P1–P4.' : 'Borrador de secuencia guardado.'); if(reviewed&&!wasReviewed)onSection('all'); onChange();
+      setSequenceDraft(saved); setPeriodAssignmentsDirty(false); setSequenceNotice(reason === 'indicators' ? 'Catálogo de indicadores guardado sin asignarlos a evaluaciones.' : reviewed ? wasReviewed ? 'Distribución y período de planificación guardados.' : 'Revisión guardada. Activa un período para distribuir la secuencia.' : 'Borrador de secuencia guardado.'); if(reviewed&&!wasReviewed&&reason!=='indicators')onSection('all'); onChange();
     } catch (error) { setSequenceError(errorText(error)); } finally { setSequenceBusy(false); }
   }
   function addSequenceActivity() {
-    setSequenceDraft(current => ({ ...current, reviewed: false, activities: [...current.activities, { id: newId(), code: '', theme: '', title: '', lessonType: 'teoria', description: '', evidence: '', indicatorIds: [], period: '' }] }));
+    setSequenceDraft(current => ({ ...current, reviewed: false, activities: [...current.activities, { id: newId(), code: '', theme: '', title: '', lessonType: null, description: '', evidence: '', indicatorIds: [], period: '' }] }));
   }
   function updateSequenceActivity(id: string, patch: Partial<SequenceActivity>) {
     setSequenceDraft(current => ({ ...current, reviewed: false, activities: current.activities.map(item => item.id === id ? { ...item, ...patch } : item) }));
@@ -186,11 +180,20 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
     setSequenceDraft(current => ({ ...current, activities: current.activities.map(item => item.id === id ? { ...item, period } : item) }));
     setPeriodAssignmentsDirty(true);
   }
+  function activatePlanningPeriod(period: string) {
+    setSequenceDraft(current => ({ ...current, activePlanningPeriod: current.activePlanningPeriod === period ? null : period }));
+    setPeriodAssignmentsDirty(true);
+  }
+  function assignActivityToActivePeriod(id: string) {
+    if (!sequenceDraft.activePlanningPeriod) return;
+    updateSequencePeriod(id, sequenceDraft.activePlanningPeriod);
+  }
+  function unassignActivity(id: string) { updateSequencePeriod(id, ''); }
   function addIndicator() {
-    setSequenceDraft(current => ({ ...current, reviewed: false, indicators: [...current.indicators, { id: newId(), code: '', label: '', competency: 'logico_matematica' }] }));
+    setSequenceDraft(current => ({ ...current, indicators: [...current.indicators, { id: newId(), code: '', label: '', competency: 'logico_matematica' }] }));
   }
   function updateIndicator(id: string, patch: Partial<SequenceIndicator>) {
-    setSequenceDraft(current => ({ ...current, reviewed: false, indicators: current.indicators.map(item => item.id === id ? { ...item, ...patch } : item) }));
+    setSequenceDraft(current => ({ ...current, indicators: current.indicators.map(item => item.id === id ? { ...item, ...patch } : item) }));
   }
   async function saveCriterion(event: React.FormEvent) {
     event.preventDefault(); setCriterionBusy(true); setCriterionError('');
@@ -220,26 +223,30 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
   // Evaluation periods can differ from the sequence's planned periods when a topic runs late.
   const periodSequenceActivities = sequenceDraft.activities;
   return <>
-    <div className="section-heading"><div><p className="eyebrow">{visibleSection === 'sequence' ? 'ACTIVIDADES · PASOS 1 Y 2' : visibleSection === 'criteria' ? 'ACTIVIDADES · CATÁLOGO REUTILIZABLE' : 'ACTIVIDADES · PASO 3 · P1–P4'}</p><h1>{visibleSection === 'sequence' ? 'Secuencia y revisión' : visibleSection === 'criteria' ? 'Criterios de evaluación' : 'Períodos'}</h1><p className="muted">{visibleSection === 'sequence' ? 'Primero eliges el origen. Si usas una secuencia, revisas sus actividades e indicadores antes de llegar a los períodos.' : visibleSection === 'criteria' ? 'Prepara aquí los criterios y sus niveles. Al crear una actividad, los elegirás en su paso de valoración.' : sequenceDraft.planningMode === 'manual' ? 'Captura manual activa: registra primero la actividad y su valor; después configuras los indicadores y criterios.' : 'Distribuye la secuencia y consulta en una sola vista las actividades de P1, P2, P3 y P4.'}</p></div>{visibleSection === 'all' ? <div className="activity-preparation-actions"><button type="button" className="button secondary" onClick={() => onSection('sequence')}><FileText size={16}/>Revisar secuencia</button><button className="button primary" disabled={!canCreateInActivePeriod} title={!periodPlan ? `Configura ${period} antes de crear actividades` : plan.period !== period ? 'Activa el período elegido antes de guardar' : undefined} onClick={() => { resetActivity(); setShowActivity(true); }}><Plus size={17}/> Crear actividad</button></div> : canOpenPeriods || visibleSection === 'criteria' ? <button type="button" className="button secondary" onClick={() => onSection('all')}>Ir a períodos</button> : null}</div>
+    <div className="section-heading"><div><p className="eyebrow">{visibleSection === 'sequence' ? 'ACTIVIDADES · ORIGEN Y REVISIÓN' : visibleSection === 'criteria' ? 'ACTIVIDADES · CATÁLOGO DE CRITERIOS' : visibleSection === 'indicators' ? 'ACTIVIDADES · CATÁLOGO DE INDICADORES' : 'ACTIVIDADES · PERÍODOS P1–P4'}</p><h1>{visibleSection === 'sequence' ? 'Secuencia y revisión' : visibleSection === 'criteria' ? 'Criterios de evaluación' : visibleSection === 'indicators' ? 'Indicadores de logro' : 'Períodos'}</h1><p className="muted">{visibleSection === 'sequence' ? 'En esta revisión solo corriges el nombre y qué se trabajará en cada actividad. Los indicadores y la distribución por período van aparte.' : visibleSection === 'criteria' ? 'Prepara aquí los criterios y sus niveles. Al crear una actividad, los elegirás en su paso de valoración.' : visibleSection === 'indicators' ? 'Guarda aquí los indicadores extraídos de la secuencia. Se vinculan a una evaluación cuando tú prepares esa actividad.' : sequenceDraft.planningMode === 'manual' ? 'Captura manual activa: registra primero la actividad y su valor; después configuras los indicadores y criterios.' : 'Activa un período para repartir la secuencia; esta planificación no activa el período de captura de calificaciones.'}</p></div>{visibleSection === 'all' ? <div className="activity-preparation-actions"><button type="button" className="button secondary" onClick={() => onSection('sequence')}><FileText size={16}/>Revisar secuencia</button><button className="button primary" disabled={!canCreateInActivePeriod} title={!periodPlan ? `Configura ${period} antes de crear actividades` : plan.period !== period ? 'Activa el período de captura elegido antes de guardar' : undefined} onClick={() => { resetActivity(); setShowActivity(true); }}><Plus size={17}/> Crear actividad</button></div> : canOpenPeriods || visibleSection === 'criteria' || visibleSection === 'indicators' ? <button type="button" className="button secondary" onClick={() => onSection('all')}>Ir a períodos</button> : null}</div>
     <ol className="activity-sequence-steps" aria-label="Flujo de actividades"><li className={visibleSection==='sequence'&&sequenceMode==='start'?'current':canOpenPeriods?'complete':''}><span>1</span><strong>Origen</strong><small>Subir o manual</small></li><li className={visibleSection==='sequence'&&sequenceMode==='review'?'current':sequenceDraft.reviewed?'complete':sequenceDraft.planningMode==='manual'?'skipped':''}><span>2</span><strong>Revisión</strong><small>Contenido e indicadores</small></li><li className={visibleSection==='all'?'current':''}><span>3</span><strong>Períodos</strong><small>P1–P4 en una vista</small></li></ol>
     {visibleSection === 'all' && <section className="panel activity-preparation-card"><div className="activity-preparation-copy"><p className="eyebrow">{sequenceDraft.planningMode === 'manual' ? 'MODO MANUAL' : 'SECUENCIA CONFIRMADA'}</p><h2>{sequenceDraft.planningMode === 'manual' ? 'Actividades sin secuencia' : `${sequenceDraft.activities.length} elementos revisados`}</h2><p className="muted">{sequenceDraft.planningMode === 'manual' ? 'Crea primero la actividad con su valor; luego reparte los puntos por indicador y selecciona criterios si usarás una rúbrica.' : 'La secuencia está lista para distribuir. Si haces cambios, vuelve a revisar antes de usarla en una actividad.'}</p></div><div className="activity-preparation-actions"><button type="button" className="text-button" onClick={() => onSection('criteria')}>Administrar criterios</button></div></section>}
     {visibleSection === 'sequence' && <>
-      {!sequenceDraft.reviewed && <div className="notice">Primero eliges una secuencia didáctica o la preparas manualmente. El sistema propone la lectura del archivo; en la revisión corriges el orden, completas los indicadores y confirmas el contenido. Luego lo repartirás entre P1–P4.</div>}
-      <SequenceSection draft={sequenceDraft} mode={sequenceMode} setMode={setSequenceMode} busy={sequenceBusy} fileBusy={fileBusy} error={sequenceError} notice={sequenceNotice} allowManualOnly={!curriculumSequence||curriculumSequence.planningMode==='manual'&&!curriculumSequence.activities.length&&!curriculumSequence.indicators.length} onImport={importSequence} onCreateManual={startManualSequence} onContinueWithoutSequence={continueWithoutSequence} onAddActivity={addSequenceActivity} onUpdateActivity={updateSequenceActivity} onRemoveActivity={id => setSequenceDraft(current => ({ ...current, reviewed:false, activities:current.activities.filter(item => item.id !== id) }))} onAddIndicator={addIndicator} onUpdateIndicator={updateIndicator} onRemoveIndicator={id => setSequenceDraft(current => ({ ...current, reviewed:false, indicators:current.indicators.filter(item => item.id !== id), activities:current.activities.map(item => ({ ...item, indicatorIds:item.indicatorIds.filter(value => value !== id) })) }))} onSave={saveSequence}/>
+      {!sequenceDraft.reviewed && <div className="notice">Primero eliges una secuencia didáctica o la preparas manualmente. La revisión conserva solo el nombre y el contenido previsto; después decides en qué período ubicar cada actividad.</div>}
+      <SequenceSection draft={sequenceDraft} mode={sequenceMode} setMode={setSequenceMode} busy={sequenceBusy} fileBusy={fileBusy} error={sequenceError} notice={sequenceNotice} allowManualOnly={!curriculumSequence||curriculumSequence.planningMode==='manual'&&!curriculumSequence.activities.length&&!curriculumSequence.indicators.length} onImport={importSequence} onCreateManual={startManualSequence} onContinueWithoutSequence={continueWithoutSequence} onAddActivity={addSequenceActivity} onUpdateActivity={updateSequenceActivity} onRemoveActivity={id => setSequenceDraft(current => ({ ...current, reviewed:false, activities:current.activities.filter(item => item.id !== id) }))} onSave={saveSequence}/>
     </>}
     {visibleSection === 'criteria' && <CriteriaSection criteria={criteria} loaded={criteriaLoaded} showForm={showCriterionForm} setShowForm={setShowCriterionForm} id={criterionId} setId={setCriterionId} label={criterionLabel} setLabel={setCriterionLabel} levels={criterionLevels} setLevels={setCriterionLevels} busy={criterionBusy} error={criterionError} onSave={saveCriterion} onImport={importCriteria} onEdit={item => { setCriterionId(item.id); setCriterionLabel(item.label); setCriterionLevels(item.levels.map(level => ({ ...level, description:level.description??'' }))); setShowCriterionForm(true); }} onArchive={archiveCriterion}/>}
+    {visibleSection === 'indicators' && <IndicatorsSection indicators={sequenceDraft.indicators} busy={sequenceBusy} error={sequenceError} notice={sequenceNotice} onAdd={addIndicator} onUpdate={updateIndicator} onRemove={id => setSequenceDraft(current => ({ ...current, indicators:current.indicators.filter(item => item.id !== id), activities:current.activities.map(item => ({ ...item, indicatorIds:item.indicatorIds.filter(value => value !== id) })) }))} onSave={() => void saveSequence(sequenceDraft.reviewed, 'indicators')}/>}
     {visibleSection === 'all' && canOpenPeriods && <>
       {!sequenceDraft.reviewed && <div className="notice">No hay una secuencia confirmada. Puedes crear actividades manuales ahora; si luego revisas una secuencia, podrás vincular otras actividades a sus indicadores.</div>}
       {sequenceDraft.reviewed && <>
         {sequenceDraft.indicators.some(indicator=>!indicator.competency)&&<div className="notice warning" role="status">Hay indicadores sin competencia asignada. Puedes distribuir el resto de la secuencia, pero no los vincules a actividades ni los uses para calificar hasta revisarlos.</div>}
-        <div className="period-workspace-heading"><div><p className="eyebrow">DISTRIBUCIÓN Y CAPTURA</p><h2>Organiza el período</h2></div><span>{sequenceDraft.activities.filter(item => item.period === period).length} temas asignados</span></div>
-        {sequenceDraft.activities.length>0&&<section className="panel period-allocation-panel"><div className="table-toolbar"><div><h3>Distribuir la secuencia</h3><p className="muted">Asigna cada elemento revisado a P1, P2, P3 o P4. Esta organización no registra que la clase se impartió.</p></div><button type="button" className="button secondary" disabled={!periodAssignmentsDirty||sequenceBusy} onClick={()=>void saveSequence(true)}>{sequenceBusy?<LoaderCircle className="spin" size={15}/>:<Save size={15}/>} Guardar distribución</button></div><div className="period-allocation-list">{sequenceDraft.activities.map((item,index)=><label className="period-allocation-row" key={item.id}><span><strong>{item.code||`Tema ${index+1}`}</strong><span>{item.title}</span></span><select aria-label={`Asignar ${item.title} a un período`} value={item.period??''} onChange={event=>updateSequencePeriod(item.id,event.target.value)}><option value="">Sin asignar</option>{['P1','P2','P3','P4'].map(value=><option key={value} value={value}>{value}</option>)}</select></label>)}</div>{sequenceError&&<div className="notice warning" role="alert">{sequenceError}</div>}{sequenceNotice&&!periodAssignmentsDirty&&<div className="notice success">{sequenceNotice}</div>}</section>}
+        <div className="period-workspace-heading"><div><p className="eyebrow">PLANIFICACIÓN DEL CONTENIDO</p><h2>Activa un período para distribuir</h2></div><span>{sequenceDraft.activities.filter(item => item.period === sequenceDraft.activePlanningPeriod).length} actividades en {sequenceDraft.activePlanningPeriod ?? 'ninguno'}</span></div>
+        {sequenceDraft.activities.length>0&&<section className="panel period-allocation-panel"><div className="table-toolbar"><div><h3>Distribuir la secuencia</h3><p className="muted">Marca P1, P2, P3 o P4 como período activo para organizar el contenido. Esto es independiente de activar el período para capturar calificaciones.</p></div><button type="button" className="button secondary" disabled={!periodAssignmentsDirty||sequenceBusy} onClick={()=>void saveSequence(true)}>{sequenceBusy?<LoaderCircle className="spin" size={15}/>:<Save size={15}/>} Guardar cambios</button></div>
+          <div className="planning-period-selector" aria-label="Activar período de planificación">{['P1','P2','P3','P4'].map(value=><button type="button" key={value} className={sequenceDraft.activePlanningPeriod===value?'active':''} aria-pressed={sequenceDraft.activePlanningPeriod===value} onClick={()=>activatePlanningPeriod(value)}><strong>{value}</strong><span>{sequenceDraft.activePlanningPeriod===value?'Activo para distribuir':'Marcar como activo'}</span><small>{sequenceDraft.activities.filter(item=>item.period===value).length} actividades asignadas</small></button>)}</div>
+          {!sequenceDraft.activePlanningPeriod&&<div className="notice">Selecciona «Marcar como activo» en P1–P4. Después podrás asignar o mover actividades a ese período.</div>}
+          <div className="period-allocation-list">{sequenceDraft.activities.map((item,index)=>{const assigned=item.period??'';const active=sequenceDraft.activePlanningPeriod;return <div className="period-allocation-row" key={item.id}><span><strong>{item.code||`Actividad ${index+1}`}</strong><span>{item.title}</span><small>{assigned?`Asignada a ${assigned}`:'Todavía sin período'}</small></span><div className="toolbar">{active&&assigned!==active&&<button type="button" className="button secondary" onClick={()=>assignActivityToActivePeriod(item.id)}>{assigned?`Mover de ${assigned} a ${active}`:`Asignar a ${active}`}</button>}{assigned&&<button type="button" className="text-button" onClick={()=>unassignActivity(item.id)}>Quitar del período</button>}{!active&&<span className="muted">Activa un período primero</span>}</div></div>})}</div>{sequenceError&&<div className="notice warning" role="alert">{sequenceError}</div>}{sequenceNotice&&!periodAssignmentsDirty&&<div className="notice success">{sequenceNotice}</div>}</section>}
       </>}
       <PeriodNav period={period} plans={plans} onPeriod={onPeriod}/>
       {plan.period !== period && <div className="notice">Estás consultando {period}; actívalo antes de guardar cambios.</div>}
       {periodPlan ? <ActivityList activities={selectedActivities} courseActivities={activities.filter(item=>item.period===period)} courses={courses} plan={periodPlan} criteria={criteria} sequenceReviewed={sequenceDraft.reviewed} onReviewSequence={() => onSection('sequence')} onConfigure={setShowEvaluation} onGrade={onGrade} onCreate={() => { if (!canCreateInActivePeriod) return; resetActivity(); setShowActivity(true); }} onLoadCriteria={() => { if(!criteriaLoaded){void fetch('/api/registro?action=bootstrap',{cache:'no-store'}).then(response=>response.json()).then(body=>{setCriteria(body.data?.criteriaCatalog??[]);setCriteriaLoaded(true);});}}}/> : <section className="panel empty-state"><h2>Prepara {period}</h2><p>Define sus fechas y distribución de puntos para llevar el registro de sus actividades.</p><button className="button primary" onClick={() => onConfigure(period)}><Settings2 size={16}/> Configurar {period}</button></section>}
     </>}
-    {showActivity && periodPlan && <ActivityDrawer period={period} plan={periodPlan} sequence={{...sequenceDraft,activities:periodSequenceActivities}} date={activityDate} setDate={setActivityDate} title={title} setTitle={setTitle} code={activityCode} setCode={selectSequenceCode} category={category} setCategory={setCategory} max={maxPoints} setMax={setMaxPoints} busy={activityBusy} error={activityError} onClose={() => setShowActivity(false)} onSubmit={createActivity}/>}
+    {showActivity && periodPlan && <ActivityDrawer period={period} plan={periodPlan} sequence={{...sequenceDraft,activities:periodSequenceActivities}} date={activityDate} setDate={setActivityDate} evidence={activityEvidence} setEvidence={setActivityEvidence} title={title} setTitle={setTitle} code={activityCode} setCode={selectSequenceCode} category={category} setCategory={setCategory} max={maxPoints} setMax={setMaxPoints} busy={activityBusy} error={activityError} onClose={() => setShowActivity(false)} onSubmit={createActivity}/>}
      {showEvaluation && <EvaluationDrawer key={showEvaluation.id+showEvaluation.revision} activity={showEvaluation} sequence={sequenceDraft} criteria={criteria} busy={activityBusy} setBusy={setActivityBusy} error={activityError} setError={setActivityError} onClose={() => {setShowEvaluation(null);onChange();}} onOpenCriteria={() => {setShowEvaluation(null);onSection('criteria');}} onSaved={() => { setShowEvaluation(null); onSection('all'); onChange(); }}/>}
   </>;
 }
@@ -248,67 +255,39 @@ function PeriodNav({period,plans,onPeriod}:{period:string;plans:EvaluationPlan[]
   return <div className="period-tabs" role="tablist" aria-label="Período de actividades">{['P1','P2','P3','P4'].map(item=><button type="button" role="tab" aria-selected={period===item} className={period===item?'selected':''} key={item} onClick={()=>onPeriod(item)}><strong>{item}</strong><small>{plans.some(saved=>saved.period===item)?'Plan guardado':'Configurar'}</small></button>)}</div>;
 }
 
-function SequenceSection({draft,mode,setMode,busy,fileBusy,error,notice,allowManualOnly,onImport,onCreateManual,onContinueWithoutSequence,onAddActivity,onUpdateActivity,onRemoveActivity,onAddIndicator,onUpdateIndicator,onRemoveIndicator,onSave}: {
+function SequenceSection({draft,mode,setMode,busy,fileBusy,error,notice,allowManualOnly,onImport,onCreateManual,onContinueWithoutSequence,onAddActivity,onUpdateActivity,onRemoveActivity,onSave}: {
  draft:SequencePlan; mode:'start'|'review'; setMode:(mode:'start'|'review')=>void; busy:boolean; fileBusy:boolean; error:string; notice:string; allowManualOnly:boolean;
- onImport:(file?:File)=>void; onCreateManual:()=>void; onContinueWithoutSequence:()=>void; onAddActivity:()=>void; onUpdateActivity:(id:string,patch:Partial<SequenceActivity>)=>void; onRemoveActivity:(id:string)=>void;
- onAddIndicator:()=>void; onUpdateIndicator:(id:string,patch:Partial<SequenceIndicator>)=>void; onRemoveIndicator:(id:string)=>void; onSave:(reviewed:boolean)=>void;
+ onImport:(file?:File)=>void; onCreateManual:()=>void; onContinueWithoutSequence:()=>void; onAddActivity:()=>void; onUpdateActivity:(id:string,patch:Partial<SequenceActivity>)=>void; onRemoveActivity:(id:string)=>void; onSave:(reviewed:boolean)=>void;
 }){
-  const sourcePeriods=[...new Set(draft.activities.map(item=>item.period).filter(Boolean))];
   return <section className="panel sequence-workspace">
-    <div className="table-toolbar"><div><h2>Contenido de la secuencia</h2><p className="muted">Carga una fuente o crea la estructura a mano. El contenido importado queda guardado para revisar y corregir antes de usarse.</p></div><span className={'pill '+(draft.reviewed?'':'provisional')}>{draft.planningMode==='manual'?'Modo manual':draft.reviewed?draft.indicators.some(indicator=>!indicator.competency)?'Revisada · pendiente':'Revisada':'Borrador'}</span></div>
+    <div className="table-toolbar"><div><h2>Contenido de la secuencia</h2><p className="muted">Carga una fuente o crea la estructura a mano. La revisión guarda el nombre y qué se trabajará.</p></div><span className={'pill '+(draft.reviewed?'':'provisional')}>{draft.planningMode==='manual'?'Modo manual':draft.reviewed?'Revisada':'Borrador'}</span></div>
     {mode==='start' ? <div className="sequence-source-grid">
-      <article className="panel"><FileText/><h3>Subir secuencia</h3><p>Extrae texto de PDF, Word o TXT y propone títulos numerados cuando los reconoce. Tú revisas cada tema e indicador antes de confirmar.</p><label className="button secondary"><Upload size={16}/>{fileBusy?'Leyendo archivo…':'Elegir PDF, DOCX o TXT'}<input type="file" hidden accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" disabled={fileBusy} onChange={event=>onImport(event.currentTarget.files?.[0])}/></label><small>Los PDF escaneados como imagen necesitan completar la ficha manualmente.</small></article>
-      <article className="panel"><BookOpenCheck/><h3>Crear secuencia manual</h3><p>Registra temas, actividades e indicadores por orden. Puedes editarla antes y después de guardarla.</p><button className="button secondary" onClick={onCreateManual}>Empezar en blanco</button></article>
+      <article className="panel"><FileText/><h3>Subir secuencia</h3><p>Extrae texto de PDF, Word o TXT y propone títulos numerados cuando los reconoce. Revisarás el nombre y el contenido de cada actividad.</p><label className="button secondary"><Upload size={16}/>{fileBusy?'Leyendo archivo…':'Elegir PDF, DOCX o TXT'}<input type="file" hidden accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" disabled={fileBusy} onChange={event=>onImport(event.currentTarget.files?.[0])}/></label><small>Los PDF escaneados como imagen necesitan completar la ficha manualmente.</small></article>
+      <article className="panel"><BookOpenCheck/><h3>Crear secuencia manual</h3><p>Registra el nombre y el contenido de las actividades. Luego distribúyelas entre los períodos.</p><button className="button secondary" onClick={onCreateManual}>Empezar en blanco</button></article>
       {allowManualOnly&&<article className="panel manual-only-choice"><ClipboardList/><h3>Trabajar sin secuencia</h3><p>Ve directamente a los períodos. Crearás las actividades por separado y definirás indicadores al preparar cada evaluación.</p><button className="button secondary" disabled={busy} onClick={onContinueWithoutSequence}>{busy?<LoaderCircle className="spin" size={15}/>:<ArrowRight size={15}/>}Continuar manualmente</button></article>}
     </div> : <>
-      <div className="sequence-import-meta"><span><strong>Origen:</strong> {draft.source==='uploaded'?'Archivo cargado':'Entrada manual'}</span>{draft.sourceName&&<span><strong>Archivo:</strong> {draft.sourceName}</span>}{draft.source==='uploaded'&&sourcePeriods.length>0&&<span><strong>Período indicado por la fuente:</strong> {sourcePeriods.join(', ')} · editable al distribuir</span>}<span><strong>{draft.activities.length}</strong> actividades · <strong>{draft.indicators.length}</strong> indicadores</span><button type="button" className="text-button" onClick={()=>setMode('start')}>Cambiar origen</button></div>
+      <div className="sequence-import-meta"><span><strong>Origen:</strong> {draft.source==='uploaded'?'Archivo cargado':'Entrada manual'}</span>{draft.sourceName&&<span><strong>Archivo:</strong> {draft.sourceName}</span>}<span><strong>{draft.activities.length}</strong> actividades detectadas</span><button type="button" className="text-button" onClick={()=>setMode('start')}>Cambiar origen</button></div>
       {draft.sourceText&&<details className="sequence-text"><summary>Ver el texto extraído para consultar</summary><pre>{draft.sourceText}</pre></details>}
-      <div className="sequence-two-column">
-        <div><div className="table-toolbar"><div><h3>Indicadores de logro</h3><p className="muted">La actividad distribuye puntos entre estos indicadores.</p></div><button type="button" className="button secondary" onClick={onAddIndicator}><Plus size={14}/> Añadir</button></div>
-          {draft.indicators.map((indicator,index)=><div className="sequence-indicator-row" key={indicator.id}><label><small>Código</small><input maxLength={80} value={indicator.code} onChange={event=>onUpdateIndicator(indicator.id,{code:event.target.value})} placeholder={`I${index+1}`}/></label><label><small>Indicador</small><input maxLength={500} value={indicator.label} onChange={event=>onUpdateIndicator(indicator.id,{label:event.target.value})} placeholder="Describe el logro observable"/></label><label><small>Competencia</small><select value={indicator.competency??''} onChange={event=>onUpdateIndicator(indicator.id,{competency:event.target.value?event.target.value as CompetencyKey:null})}><option value="">Sin asignar · revisar</option>{COMPETENCY_GROUPS.map(item=><option key={item.key} value={item.key}>{item.label}</option>)}</select></label><button type="button" className="icon-button" aria-label="Quitar indicador" onClick={()=>onRemoveIndicator(indicator.id)}><Trash2 size={15}/></button></div>)}
-          {!draft.indicators.length&&<div className="empty-state compact">Todavía no hay indicadores. La asignación de puntos y el resumen por competencia necesitan este catálogo.</div>}
-          {draft.indicators.some(indicator=>!indicator.competency)&&<div className="notice warning sequence-mapping-warning" role="status"><strong>Hay {draft.indicators.filter(indicator=>!indicator.competency).length} indicador(es) sin competencia.</strong> Asigna cada competencia según el currículo y los criterios que use tu centro. Puedes continuar con los indicadores ya clasificados; no vincules ni califiques los pendientes.</div>}
-        </div>
-        <div><div className="table-toolbar"><div><h3>Temas y actividades de la secuencia</h3><p className="muted">Los títulos propuestos desde el archivo se pueden editar.</p></div><button type="button" className="button secondary" onClick={onAddActivity}><Plus size={14}/> Añadir</button></div>
-          {draft.activities.map((item,index)=>(
-            <article className="sequence-activity-card" key={item.id}>
-              <div className="sequence-activity-heading"><strong>{item.code||`Tema ${index+1}`}</strong><button type="button" className="text-button" onClick={()=>onRemoveActivity(item.id)}>Quitar</button></div>
-              <div className="form-grid">
-                <label>Código<input maxLength={80} value={item.code} onChange={event=>onUpdateActivity(item.id,{code:event.target.value})} placeholder="Ej.: 2.1"/></label>
-                <label>Tema<input maxLength={250} value={item.theme} onChange={event=>onUpdateActivity(item.id,{theme:event.target.value})} placeholder="Tema de la secuencia"/></label>
-                <label className="sequence-title-field">Nombre de la clase o actividad<input required maxLength={250} value={item.title} onChange={event=>onUpdateActivity(item.id,{title:event.target.value})} placeholder="Qué se trabajará"/></label>
-                <label>Tipo<select value={item.lessonType??''} onChange={event=>onUpdateActivity(item.id,{lessonType:event.target.value?event.target.value as NonNullable<SequenceActivity['lessonType']>:null})}><option value="">Sin clasificar · revisar</option>{Object.entries(LESSON_LABELS).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
-                <label>Descripción<textarea rows={2} maxLength={4000} value={item.description} onChange={event=>onUpdateActivity(item.id,{description:event.target.value})} placeholder="Contenido, explicación o ejercicios propuestos"/></label>
-                <label>Evidencia esperada<textarea rows={2} maxLength={1000} value={item.evidence} onChange={event=>onUpdateActivity(item.id,{evidence:event.target.value})} placeholder="Qué entregará o mostrará el estudiante"/></label>
-              </div>
-              <fieldset className="indicator-checklist">
-                <legend>Indicadores que se trabajan</legend>
-                {item.assessmentInstrument?.relatedCompetencyText&&<small className="indicator-suggestion-note">Preselección propuesta por las competencias mencionadas en el Anexo {item.assessmentInstrument.annexNumber}; confirma o ajusta esta relación.</small>}
-                {draft.indicators.map(indicator=><label key={indicator.id}><input type="checkbox" checked={item.indicatorIds.includes(indicator.id)} onChange={event=>onUpdateActivity(item.id,{indicatorIds:event.target.checked?[...item.indicatorIds,indicator.id]:item.indicatorIds.filter(id=>id!==indicator.id)})}/><span>{indicator.code||'—'} · {indicator.label||'Indicador pendiente'}</span></label>)}
-                {!draft.indicators.length&&<small>Añade indicadores antes de vincularlos.</small>}
-              </fieldset>
-              {(item.evaluationCriteria?.length||item.instrument||item.evaluationPurpose||item.plannedPoints!==undefined||item.plannedPercent!==undefined||item.feedback)&&<details className="sequence-source-evaluation">
-                <summary>Datos de evaluación según la secuencia fuente</summary>
-                <div className="form-grid">
-                  <label>Instrumento de evaluación<input maxLength={1000} value={item.instrument??''} onChange={event=>onUpdateActivity(item.id,{instrument:event.target.value})}/></label>
-                  <label>Propósito<select value={item.evaluationPurpose??''} onChange={event=>onUpdateActivity(item.id,{evaluationPurpose:event.target.value?event.target.value as EvaluationPurpose:null})}><option value="">Sin clasificar</option>{Object.entries(PURPOSE_LABELS).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
-                  <label>Puntos de la fuente<input type="number" min={0} max={10000} step={0.01} value={item.plannedPoints??''} onChange={event=>onUpdateActivity(item.id,{plannedPoints:event.target.value===''?null:Number(event.target.value)})}/></label>
-                  <label>Porcentaje de la fuente<input type="number" min={0} max={100} step={0.01} value={item.plannedPercent??''} onChange={event=>onUpdateActivity(item.id,{plannedPercent:event.target.value===''?null:Number(event.target.value)})}/></label>
-                  <label className="sequence-source-wide">Criterios de evaluación del plan · base para preparar la rúbrica<textarea rows={Math.min(8,Math.max(3,item.evaluationCriteria?.length??0))} maxLength={8000} value={(item.evaluationCriteria??[]).join('\n')} onChange={event=>onUpdateActivity(item.id,{evaluationCriteria:event.target.value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean)})}/></label>
-                  <label className="sequence-source-wide">Retroalimentación prevista<textarea rows={2} maxLength={2000} value={item.feedback??''} onChange={event=>onUpdateActivity(item.id,{feedback:event.target.value})}/></label>
-                </div>
-              </details>}
-              {item.assessmentInstrument&&<AssessmentSourcePreview instrument={item.assessmentInstrument}/>}
-            </article>
-          ))}
-          {!draft.activities.length&&<div className="empty-state compact">No se detectaron actividades todavía. Añádelas aquí o revisa el texto importado.</div>}
-        </div>
-      </div>
-      {draft.finalAssessment&&<FinalAssessmentSourcePreview assessment={draft.finalAssessment}/>}
+      <div className="table-toolbar"><div><h3>Actividades de la secuencia</h3><p className="muted">Los indicadores, el tipo y la evidencia se gestionan después, en apartados distintos.</p></div><button type="button" className="button secondary" onClick={onAddActivity}><Plus size={14}/> Añadir actividad</button></div>
+      {draft.activities.map((item,index)=><article className="sequence-activity-card" key={item.id}>
+        <div className="sequence-activity-heading"><strong>Actividad {index+1}</strong><button type="button" className="text-button" onClick={()=>onRemoveActivity(item.id)}>Quitar</button></div>
+        <div className="form-grid"><label className="sequence-title-field">Nombre de la actividad<input required maxLength={250} value={item.title} onChange={event=>onUpdateActivity(item.id,{title:event.target.value})} placeholder="Ej.: Suma de vectores"/></label><label className="sequence-source-wide">Qué se trabajará<textarea required rows={3} maxLength={4000} value={item.description||item.theme} onChange={event=>onUpdateActivity(item.id,{description:event.target.value,theme:''})} placeholder="Contenido, explicación, ejercicios o tema previsto"/></label></div>
+      </article>)}
+      {!draft.activities.length&&<div className="empty-state compact">No se detectaron actividades todavía. Añádelas aquí o revisa el texto importado.</div>}
       {error&&<div className="notice warning" role="alert">{error}</div>}{notice&&<div className="notice success">{notice}</div>}
-      <div className="sequence-save-actions"><button className="button secondary" disabled={busy} onClick={()=>onSave(false)}><Save size={15}/> Guardar borrador</button><button className="button primary" disabled={busy||!draft.indicators.length||!draft.activities.length} onClick={()=>onSave(true)}>{busy?<LoaderCircle className="spin" size={16}/>:<Check size={16}/>} Confirmar revisión</button></div>
+      <div className="sequence-save-actions"><button className="button secondary" disabled={busy} onClick={()=>onSave(false)}><Save size={15}/> Guardar borrador</button><button className="button primary" disabled={busy||!draft.activities.length} onClick={()=>onSave(true)}>{busy?<LoaderCircle className="spin" size={16}/>:<Check size={16}/>} Confirmar revisión</button></div>
     </>}
     {mode==='start'&&(error||notice)&&<div className={error?'notice warning':'notice success'}>{error||notice}</div>}
+  </section>;
+}
+
+function IndicatorsSection({indicators,busy,error,notice,onAdd,onUpdate,onRemove,onSave}:{indicators:SequenceIndicator[];busy:boolean;error:string;notice:string;onAdd:()=>void;onUpdate:(id:string,patch:Partial<SequenceIndicator>)=>void;onRemove:(id:string)=>void;onSave:()=>void}){
+  return <section className="panel sequence-workspace"><div className="table-toolbar"><div><h2>Catálogo de indicadores</h2><p className="muted">Guárdalos aquí sin asignarlos a una actividad. Al crear la evaluación, elegirás cuáles corresponden y distribuirás sus puntos.</p></div><button type="button" className="button secondary" onClick={onAdd}><Plus size={15}/> Añadir indicador</button></div>
+    {indicators.map((indicator,index)=><div className="sequence-indicator-row" key={indicator.id}><label><small>Código</small><input maxLength={80} value={indicator.code} onChange={event=>onUpdate(indicator.id,{code:event.target.value})} placeholder={`I${index+1}`}/></label><label><small>Indicador de logro</small><input maxLength={500} value={indicator.label} onChange={event=>onUpdate(indicator.id,{label:event.target.value})} placeholder="Describe el logro observable"/></label><label><small>Competencia</small><select value={indicator.competency??''} onChange={event=>onUpdate(indicator.id,{competency:event.target.value?event.target.value as CompetencyKey:null})}><option value="">Sin asignar</option>{COMPETENCY_GROUPS.map(item=><option key={item.key} value={item.key}>{item.label}</option>)}</select></label><button type="button" className="icon-button" aria-label={`Quitar indicador ${indicator.code||index+1}`} onClick={()=>onRemove(indicator.id)}><Trash2 size={15}/></button></div>)}
+    {!indicators.length&&<div className="empty-state compact"><h3>No hay indicadores cargados</h3><p>Al importar una secuencia se guardarán aquí cuando el documento los incluya. También puedes agregarlos manualmente.</p></div>}
+    {indicators.some(item=>!item.competency)&&<div className="notice warning" role="status">Hay indicadores pendientes de asociar con una competencia. Completa esa relación antes de usarlos para calificar.</div>}
+    {error&&<div className="notice warning" role="alert">{error}</div>}{notice&&<div className="notice success" role="status">{notice}</div>}
+    <div className="sequence-save-actions"><button type="button" className="button primary" disabled={busy} onClick={onSave}>{busy?<LoaderCircle className="spin" size={15}/>:<Save size={15}/>} Guardar catálogo</button></div>
   </section>;
 }
 
@@ -326,13 +305,6 @@ function AssessmentSourcePreview({instrument}:{instrument:SourceAssessmentInstru
       {!instrument.scored&&<p className="notice">Este anexo es diagnóstico. Registra observaciones; no crea una nota ni se suma al período.</p>}
     </div>
   </details>;
-}
-
-function FinalAssessmentSourcePreview({assessment}:{assessment:SequenceFinalAssessment}){
-  return <section className="panel sequence-final-assessment" aria-label="Evaluación final de la secuencia">
-    <div><p className="eyebrow">CIERRE DE LA SECUENCIA</p><h3>{assessment.title}</h3><p className="muted">La prueba usa {assessment.internalMaxPoints??'—'} puntos internos y aporta {assessment.periodPoints??'—'} puntos al período. La guía orienta la corrección; no duplica la nota del examen.</p></div>
-    <AssessmentSourcePreview instrument={assessment.instrument}/>
-  </section>;
 }
 
 function CriteriaSection({criteria,loaded,showForm,setShowForm,id,setId,label,setLabel,levels,setLevels,busy,error,onSave,onImport,onEdit,onArchive}: {
@@ -372,8 +344,8 @@ function CriteriaSection({criteria,loaded,showForm,setShowForm,id,setId,label,se
   </section></div>;
 }
 
-function ActivityDrawer({period,plan,sequence,date,setDate,title,setTitle,code,setCode,category,setCategory,max,setMax,busy,error,onClose,onSubmit}: {
- period:string;plan:EvaluationPlan;sequence:SequencePlan;date:string;setDate:(value:string)=>void;title:string;setTitle:(value:string)=>void;code:string;setCode:(value:string)=>void;category:ActivityCategoryKey;setCategory:(value:ActivityCategoryKey)=>void;max:number;setMax:(value:number)=>void;busy:boolean;error:string;onClose:()=>void;onSubmit:(event:React.FormEvent)=>void;
+function ActivityDrawer({period,plan,sequence,date,setDate,evidence,setEvidence,title,setTitle,code,setCode,category,setCategory,max,setMax,busy,error,onClose,onSubmit}: {
+ period:string;plan:EvaluationPlan;sequence:SequencePlan;date:string;setDate:(value:string)=>void;evidence:string;setEvidence:(value:string)=>void;title:string;setTitle:(value:string)=>void;code:string;setCode:(value:string)=>void;category:ActivityCategoryKey;setCategory:(value:ActivityCategoryKey)=>void;max:number;setMax:(value:number)=>void;busy:boolean;error:string;onClose:()=>void;onSubmit:(event:React.FormEvent)=>void;
 }){
   const options=plan.categories.map(item=>({key:item.key,label:item.label}));
   return <div className="modal-backdrop" onClick={()=>!busy&&onClose()}>
@@ -382,10 +354,11 @@ function ActivityDrawer({period,plan,sequence,date,setDate,title,setTitle,code,s
       <form onSubmit={onSubmit}><fieldset disabled={busy} className="bare-fieldset">
         <label>Nombre de la actividad<input required maxLength={250} value={title} onChange={event=>setTitle(event.target.value)} placeholder="Ej.: Suma de vectores"/></label>
         <label>Valor en puntos<input aria-label="Máximo de puntos" type="number" min={0.01} max={10000} step={0.01} value={max} required onChange={event=>setMax(Number(event.target.value))}/></label>
-        <details className="activity-advanced-options"><summary>Opciones adicionales · fecha, categoría y secuencia</summary><div className="activity-advanced-grid">
+        <details className="activity-advanced-options"><summary>Opciones de asignación · fecha, categoría, secuencia y evidencia</summary><div className="activity-advanced-grid">
           <label>Fecha de evaluación<input aria-label="Fecha de evaluación" type="date" value={date} required onChange={event=>setDate(event.target.value)}/><small>La fecha de creación se registra automáticamente.</small></label>
           <label>Categoría de evaluación<select value={category} onChange={event=>setCategory(event.target.value as ActivityCategoryKey)}>{options.map(item=><option key={item.key} value={item.key}>{item.label}</option>)}<option value="extra">Puntos extra</option></select></label>
           <label>Vínculo con la secuencia<select value={code} onChange={event=>setCode(event.target.value)}><option value="MANUAL">Manual · sin vínculo con la secuencia</option>{sequence.reviewed&&sequence.activities.map(item=><option key={item.id} value={item.id} disabled={isUnscoredDiagnostic(item)}>{item.code} · {item.title}{item.period?` · plan ${item.period}`:' · sin período planificado'}{isUnscoredDiagnostic(item)?' · diagnóstica, sin nota':''}</option>)}</select><small>{sequence.reviewed?'Las actividades diagnósticas sin ponderación permanecen en la secuencia y no se convierten en notas.':'La secuencia es opcional; si no está revisada, la actividad se guarda sin vínculo.'}</small></label>
+          <label className="sequence-source-wide">Evidencia o producto esperado<textarea rows={2} maxLength={1000} value={evidence} onChange={event=>setEvidence(event.target.value)} placeholder="Define aquí qué entregará o mostrará el estudiante"/></label>
         </div></details>
         <div className="notice">Crear una actividad no registra asistencia ni confirma que la clase se impartió.</div>{error&&<div className="notice warning" role="alert">{error}</div>}
         <button className="button primary wide" disabled={busy}>{busy?<LoaderCircle className="spin" size={16}/>:<ArrowRight size={16}/>} {busy?'Guardando…':'Crear y continuar'}</button>
@@ -426,7 +399,7 @@ function EvaluationDrawer({activity,sequence,criteria,busy,setBusy,error,setErro
   const usesManualIndicators=!sequence.reviewed||savedManualIndicators.length>0||eligible.length===0;
   const [manualIndicators,setManualIndicators]=useState<SequenceIndicator[]>(()=>savedManualIndicators.length?savedManualIndicators.map(item=>({id:item.indicatorId,code:item.code,label:item.label,competency:item.competency})): [{id:`manual:${activity.id}`,code:'',label:activity.indicator||activity.title,competency:activity.competency??'logico_matematica'}]);
   const availableIndicators=usesManualIndicators?manualIndicators:eligible;
-  const [allocations,setAllocations]=useState(()=>activity.indicatorPoints.length?activity.indicatorPoints.map(item=>({indicatorId:item.indicatorId,points:item.points})):availableIndicators.length?[{indicatorId:availableIndicators[0].id,points:activity.maxPoints}]:[]);
+  const [allocations,setAllocations]=useState(()=>activity.indicatorPoints.length?activity.indicatorPoints.map(item=>({indicatorId:item.indicatorId,points:item.points})):matchingSequence?[]:availableIndicators.length?[{indicatorId:availableIndicators[0].id,points:activity.maxPoints}]:[]);
   const [selectedCriteria,setSelectedCriteria]=useState<SelectedCriterionDraft[]>(()=>activity.rubric.map(item=>({id:item.id,...(!item.id.startsWith('sequence:')?{catalogId:item.id}:{}),label:item.label,levels:item.levels,indicatorId:item.indicatorId??availableIndicators[0]?.id??'',weight:item.weight??1,source:item.id.startsWith('sequence:')})));
   const criterionItems=criteria;
   const [instrument,setInstrument]=useState(activity.instrument||'');

@@ -231,7 +231,7 @@ test('la revisión conserva los datos estructurados de cada actividad al guardar
   }
 });
 
-test('permite revisar indicadores todavía no usados y bloquea su uso en actividades calificables', async () => {
+test('separa el catálogo de indicadores, activa períodos de planificación sin mover la captura y valida la competencia al calificar', async () => {
   const db = await createTestDatabase();
   try {
     const service = new RegistroService(db, { demo: true, today: () => '2026-11-15' });
@@ -239,17 +239,20 @@ test('permite revisar indicadores todavía no usados y bloquea su uso en activid
     const bootstrap = await service.bootstrap(owner);
     const unresolvedId = 'indicator-i6-unresolved';
     const sequence = {
-      source: 'uploaded' as const, sourceName: 'secuencia.pdf', sourceText: '', reviewed: true,
+      source: 'uploaded' as const, sourceName: 'secuencia.pdf', sourceText: '', reviewed: true, activePlanningPeriod: 'P2' as const,
       indicators: [
         { id: 'indicator-i1', code: 'I1', label: 'Usa razonamiento matemático.', competency: 'logico_matematica' as const },
         { id: unresolvedId, code: 'I6', label: 'Integra la tecnología.', competency: null },
       ],
-      activities: [{ id: 'sequence-1-1', code: '1.1', theme: 'Vectores', title: 'Exploración inicial', lessonType: 'teoria' as const, description: '', evidence: '', indicatorIds: ['indicator-i1'], period: 'P1' }],
+      activities: [{ id: 'sequence-1-1', code: '1.1', theme: 'Vectores', title: 'Exploración inicial', lessonType: null, description: 'Exploración de conceptos iniciales.', evidence: '', indicatorIds: [], period: '' }],
     };
 
     const saved = await service.saveCurriculumSequence(owner, sequence);
     assert.equal(saved.reviewed, true, 'un indicador no usado no debe bloquear la secuencia completa');
     assert.equal(saved.indicators.find(item => item.id === unresolvedId)?.competency, null, 'no se inventa la competencia pendiente');
+    assert.equal(saved.activities[0]?.indicatorIds.length, 0, 'la revisión de secuencia no asigna indicadores a una actividad evaluable');
+    assert.equal(saved.activePlanningPeriod, 'P2', 'el período de planificación queda guardado en la secuencia');
+    assert.equal((await service.bootstrap(owner)).plan.period, bootstrap.plan.period, 'activar el período de planificación no cambia el período activo de captura');
 
     const created = await service.createSharedActivity(owner, {
       courseIds: [bootstrap.courses[0]!.id],
@@ -261,10 +264,12 @@ test('permite revisar indicadores todavía no usados y bloquea su uso en activid
       indicatorPoints: [{ indicatorId: unresolvedId, points: 5 }], rubric: [],
     }), /Asigna una competencia al indicador/);
 
-    await assert.rejects(service.saveCurriculumSequence(owner, {
+    const savedWithoutIndicatorAssignment = await service.saveCurriculumSequence(owner, {
       ...saved,
-      activities: [{ ...saved.activities[0]!, indicatorIds: ['indicator-i1', unresolvedId] }],
-    }), /competencia a cada indicador vinculado a una actividad/);
+      activePlanningPeriod: 'P3',
+      activities: [{ ...saved.activities[0]!, indicatorIds: [] }],
+    });
+    assert.equal(savedWithoutIndicatorAssignment.activePlanningPeriod, 'P3', 'se puede cambiar el período activo para distribuir la secuencia');
   } finally {
     await db.close();
   }
