@@ -25,7 +25,7 @@ const criterionImportSchema = z.object({ criteria: z.array(criterionSchema.omit(
 const rosterRowSchema = z.object({ externalId: z.string().trim().min(1).max(200), number: z.number().int().positive().max(10000), name: z.string().trim().min(1).max(250) });
 const rosterBatchesSchema = z.array(z.object({ courseId: uid, rows: z.array(rosterRowSchema).min(1).max(250) })).min(1).max(20);
 const activityEvaluationSchema = z.object({ requestId:z.string().min(1).max(200), activityId:uid, revision:z.number().int().min(0), scoringMode:z.enum(["points","rubric"]), instrument:z.string().max(250), manualIndicators:z.array(z.object({id:z.string().min(1).max(100),code:z.string().max(80),label:z.string().trim().min(1).max(500),competency:competencyKey})).max(100).optional().default([]), indicatorPoints:z.array(z.object({indicatorId:z.string().min(1).max(100),points:z.number().finite().positive()})).max(100), rubric:z.array(z.object({id:z.string().min(1).max(100),label:z.string().trim().min(1).max(200),competency:competencyKey.nullable().optional(),indicator:z.string().max(500).optional(),indicatorId:z.string().min(1).max(100).optional(),weight:z.number().finite().positive().max(10000).optional(),levels:rubricLevelsSchema})).max(100) });
-const courseSchema = z.object({ code:z.string().trim().min(1).max(12).regex(/^[A-Za-z0-9_-]+$/), name:z.string().trim().min(1).max(120), startDate:z.string(), endDate:z.string(), weekly:z.array(z.object({weekday:z.number().int().min(1).max(7),blocks:z.array(z.number().int().min(1).max(12)).min(1).max(12)})).min(1).max(7), noClassDates:z.array(z.string()).max(100) });
+const courseSchema = z.object({ code:z.string().trim().min(1).max(12).regex(/^[A-Za-z0-9_-]+$/), name:z.string().trim().min(1).max(120), startDate:z.string(), endDate:z.string(), weekly:z.array(z.object({weekday:z.number().int().min(1).max(7),blocks:z.array(z.number().int().min(1).max(12)).min(1).max(12)})).min(1).max(7).optional(), noClassDates:z.array(z.string()).max(100).default([]) });
 function parse<T>(schema: z.ZodType<T>, value: unknown): T { const r = schema.safeParse(value); if (!r.success) throw new AppError(400, "Datos inválidos: " + r.error.issues[0].message); return r.data; }
 function findLinkedSequenceActivity(sequence: SequencePlan | null | undefined, id: string | null | undefined, code: string | undefined, evaluationPeriod: string | null | undefined): SequenceActivity | undefined {
  if (!sequence) return undefined;
@@ -229,23 +229,29 @@ export class RegistroService {
   const value=parse(courseSchema,input);await this.ensureOwner(ownerId);const code=value.code.toLocaleUpperCase();
   requireDate(value.startDate);requireDate(value.endDate);
   if(value.endDate<=value.startDate||value.endDate>'2028-06-30')throw new AppError(400,"El rango del horario debe terminar después del inicio y no pasar del 30 de junio de 2028.");
-  if(new Set(value.weekly.map(item=>item.weekday)).size!==value.weekly.length||value.weekly.some(item=>new Set(item.blocks).size!==item.blocks.length))throw new AppError(400,"No repitas días ni bloques en el horario.");
+  const weekly=value.weekly??[];
+  if(new Set(weekly.map(item=>item.weekday)).size!==weekly.length||weekly.some(item=>new Set(item.blocks).size!==item.blocks.length))throw new AppError(400,"No repitas días ni bloques en el horario.");
   const noClassDates=new Set(value.noClassDates);for(const date of noClassDates){requireDate(date);if(date<value.startDate||date>value.endDate)throw new AppError(400,"Las fechas sin clase deben quedar dentro del horario.");}
   return this.db.transaction(async tx=>{
    if((await tx.query("SELECT 1 FROM courses WHERE owner_id=$1 AND upper(code)=upper($2)",[ownerId,code])).rows.length)throw new AppError(409,"Ya existe un curso con ese código.");
    const id=randomUUID();await tx.query("INSERT INTO courses(id,owner_id,code,name) VALUES($1,$2,$3,$4)",[id,ownerId,code,value.name.trim()]);
-   const weekly=new Map(value.weekly.map(item=>[item.weekday,item.blocks]));const slots:{date:string;block:number}[]=[];
-   const cursor=new Date(value.startDate+'T12:00:00Z');const end=new Date(value.endDate+'T12:00:00Z');
-   for(;cursor<=end;cursor.setUTCDate(cursor.getUTCDate()+1)){
-    const weekday=cursor.getUTCDay()||7;const blocks=weekly.get(weekday);if(!blocks)continue;
-    const date=cursor.toISOString().slice(0,10);if(noClassDates.has(date))continue;
-    for(const block of blocks)slots.push({date,block});
+   const hasLoadedCourseCalendar=classCalendar.sessions.some(slot=>slot.courseCode===code&&slot.date>=value.startDate&&slot.date<=value.endDate);
+   const loadedSlots=classCalendar.sessions.filter(slot=>slot.courseCode===code&&slot.date>=value.startDate&&slot.date<=value.endDate&&!noClassDates.has(slot.date));
+   const slots:{date:string;block:number}[]=loadedSlots.map(slot=>({date:slot.date,block:slot.block}));
+   if(!hasLoadedCourseCalendar&&weekly.length){
+    const weeklyMap=new Map(weekly.map(item=>[item.weekday,item.blocks]));
+    const cursor=new Date(value.startDate+'T12:00:00Z');const end=new Date(value.endDate+'T12:00:00Z');
+    for(;cursor<=end;cursor.setUTCDate(cursor.getUTCDate()+1)){
+     const weekday=cursor.getUTCDay()||7;const blocks=weeklyMap.get(weekday);if(!blocks)continue;
+     const date=cursor.toISOString().slice(0,10);if(noClassDates.has(date))continue;
+     for(const block of blocks)slots.push({date,block});
+    }
    }
    if(slots.length>7000)throw new AppError(400,"El horario es demasiado amplio. Reduce el rango o los bloques por semana.");
    const params:unknown[]=[];
    const values=slots.map((slot,index)=>{const start=index*4+1;params.push(ownerId,id,slot.date,slot.block);return `($${start},$${start+1},$${start+2}::date,$${start+3}::integer)`;});
    if(values.length)await tx.query(`INSERT INTO scheduled_sessions(owner_id,course_id,session_date,block) VALUES ${values.join(",")} ON CONFLICT DO NOTHING`,params);
-   const after={id,code,name:value.name.trim(),students:[]};await this.log(tx,ownerId,"course.created",id,null,{...after,startDate:value.startDate,endDate:value.endDate,weekly:value.weekly,noClassDates:[...noClassDates],scheduledSlots:slots.length});return after;
+   const after={id,code,name:value.name.trim(),students:[]};await this.log(tx,ownerId,"course.created",id,null,{...after,startDate:value.startDate,endDate:value.endDate,calendarSource:hasLoadedCourseCalendar?"preloaded_daily_calendar":weekly.length?"manual_weekly":"none",noClassDates:[...noClassDates],scheduledSlots:slots.length});return after;
   });
  }
 

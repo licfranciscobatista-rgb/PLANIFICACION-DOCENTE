@@ -8,6 +8,7 @@ import { createTestDatabase } from '../src/lib/db';
 import { AppError } from '../src/lib/model';
 import { parseRosterWorkbook } from '../src/lib/roster-import';
 import { RegistroService } from '../src/lib/service';
+import classCalendar from '../src/lib/data/class-schedule-2026-27.json';
 
 function escapeXml(value: string) { return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 
@@ -62,7 +63,7 @@ before(async () => {
   db = await createTestDatabase(path.join(directory, 'database'));
   service = new RegistroService(db, { today: () => '2026-11-15' });
   for (const code of ['5A', '5B', '5C']) {
-    const created = await service.createCourse(owner, { code, name: `Matemática ${code}`, startDate: '2026-10-20', endDate: '2026-11-30', weekly: [{ weekday: 1, blocks: [1] }], noClassDates: [] });
+    const created = await service.createCourse(owner, { code, name: `Matemática ${code}`, startDate: '2026-10-20', endDate: '2026-11-30' });
     courses.push({ id: created.id, code });
   }
 });
@@ -73,6 +74,17 @@ after(async () => {
   assert.ok(resolved.startsWith(root + path.sep));
   assert.ok(path.basename(resolved).startsWith('roster-import-'));
   await rm(resolved, { recursive: true, force: true });
+});
+
+test('al crear un curso conocido carga exactamente sus fechas y bloques diarios precargados', async () => {
+  for (const course of courses) {
+    const expected = classCalendar.sessions
+      .filter(slot => slot.courseCode === course.code && slot.date >= '2026-10-20' && slot.date <= '2026-11-30')
+      .map(slot => [slot.date, slot.block]);
+    const stored = await db.query('SELECT session_date::text AS date,block FROM scheduled_sessions WHERE owner_id=$1 AND course_id=$2 ORDER BY session_date,block', [owner, course.id]);
+    assert.deepEqual(stored.rows.map(row => [String(row.date).slice(0, 10), Number(row.block)]), expected, `${course.code} conserva el calendario fuente sin inferir un patrón semanal`);
+    assert.ok(expected.length > 0, `${course.code} debe tener sesiones en el rango elegido`);
+  }
 });
 
 test('importa las tres listas en una transacción, conserva las identidades al reordenar y retiene notas', async () => {
