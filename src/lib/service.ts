@@ -850,6 +850,26 @@ export class RegistroService {
   });
  }
 
+ async manageRoster(ownerId: string, input: unknown) {
+  const rowSchema=z.object({id:uid,name:z.string().trim().min(1).max(250),number:z.number().int().positive().max(10000)});
+  const value=parse(z.object({courseId:uid,before:z.array(rowSchema).max(1000),rows:z.array(rowSchema).max(1000)}),input);
+  await this.ensureOwner(ownerId);
+  return this.db.transaction(async tx=>{
+   await this.requireCourse(ownerId,value.courseId,tx);
+   await tx.query('SELECT id FROM students WHERE owner_id=$1 AND course_id=$2 FOR UPDATE',[ownerId,value.courseId]);
+   const before=await this.roster(ownerId,value.courseId,tx);
+   const snapshot=(rows:{id:string;name:string;number:number}[])=>JSON.stringify(rows.map(({id,name,number})=>({id,name,number})).sort((a,b)=>a.id.localeCompare(b.id)));
+   if(snapshot(before)!==snapshot(value.before))throw new AppError(409,'La lista cambió desde que la abriste. Recarga Cursos antes de volver a editar.');
+   const ids=new Set(value.rows.map(row=>row.id));
+   if(ids.size!==value.rows.length||ids.size!==before.length||before.some(row=>!ids.has(row.id)))throw new AppError(400,'La administración debe conservar los mismos estudiantes del curso.');
+   if(new Set(value.rows.map(row=>row.number)).size!==value.rows.length)throw new AppError(400,'Cada estudiante debe tener un lugar distinto.');
+   for(const row of value.rows)await tx.query('UPDATE students SET name=$1,number=$2 WHERE owner_id=$3 AND course_id=$4 AND id=$5',[row.name,row.number,ownerId,value.courseId,row.id]);
+   const after=await this.roster(ownerId,value.courseId,tx);
+   await this.log(tx,ownerId,'roster.managed',value.courseId,before,after);
+   return after;
+  });
+ }
+
  async importRoster(ownerId: string, courseId: string, rows: RosterRow[]) {
   await this.importRosters(ownerId, [{ courseId, rows }]);
   return this.roster(ownerId, courseId);

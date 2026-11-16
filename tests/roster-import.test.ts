@@ -58,6 +58,32 @@ let service: RegistroService;
 const owner = `roster-workbook-${randomUUID()}`;
 const courses: { id: string; code: string }[] = [];
 
+test('administrar nombres y lugares conserva identidades, notas, asistencia y otros cursos', async () => {
+  const actor=`manage-${randomUUID()}`;
+  const course=await service.createCourse(actor,{code:'5A',name:'Prueba',startDate:'2026-10-20',endDate:'2026-11-30'});
+  const other=await service.createCourse(actor,{code:'5B',name:'Otro',startDate:'2026-10-20',endDate:'2026-11-30'});
+  const before=await service.importRoster(actor,course.id,[{externalId:'a',number:1,name:'Ana'},{externalId:'b',number:2,name:'Luis'}]);
+  await service.importRoster(actor,other.id,[{externalId:'a',number:1,name:'Otra persona'}]);
+  const ana=before.find(row=>row.externalId==='a')!;
+  const attendance=await service.attendance(actor,course.id,'2026-10-20',1);
+  await service.saveAttendance(actor,{requestId:randomUUID(),courseId:course.id,date:'2026-10-20',block:1,revision:0,lessonType:'teoria',rows:attendance.rows.map(row=>({studentId:row.studentId,status:'P',behavior:7,comment:'Observación'}))});
+  const activity=await service.createActivity(actor,{courseId:course.id,category:'exam',title:'Prueba',date:'2026-11-01',maxPoints:10,requestId:randomUUID()});
+  await service.saveGrades(actor,{requestId:randomUUID(),activityId:activity.id,revision:0,rows:[{studentId:ana.id,score:9}]});
+  const snapshot=await service.exportData(actor);
+  const rows=before.map(row=>({id:row.id,name:row.id===ana.id?'Ana corregida':row.name,number:row.number===1?2:1}));
+  const after=await service.manageRoster(actor,{courseId:course.id,before,rows});
+  assert.equal(after.find(row=>row.id===ana.id)?.name,'Ana corregida');
+  assert.equal(after.find(row=>row.id===ana.id)?.number,2);
+  const exported=await service.exportData(actor);
+  for(const key of ['attendance','grades','sessions','scheduledSessions'] as const)assert.deepEqual(exported[key],snapshot[key]);
+  assert.deepEqual(exported.students.filter(row=>row.course_id===other.id),snapshot.students.filter(row=>row.course_id===other.id));
+  assert.equal((await service.grades(actor,activity.id)).rows.find(row=>row.studentId===ana.id)?.score,9);
+  await assert.rejects(service.manageRoster(actor,{courseId:course.id,before,rows}),/La lista cambió/);
+  await assert.rejects(service.manageRoster(actor,{courseId:course.id,before:after,rows:rows.map(row=>({...row,number:1}))}),/lugar distinto/);
+  await assert.rejects(service.manageRoster(actor,{courseId:course.id,before:after,rows:[rows[0]]}),/mismos estudiantes/);
+  await assert.rejects(service.manageRoster('otro-propietario',{courseId:course.id,before:after,rows}));
+});
+
 before(async () => {
   await mkdir(directory, { recursive: true });
   db = await createTestDatabase(path.join(directory, 'database'));

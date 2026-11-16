@@ -69,6 +69,7 @@ export async function POST(req:NextRequest) {
       case 'criteria-import': data=await service.importEvaluationCriteria(owner,body.input);break;
       case 'archive-criterion': {const input=body.input as {id?:unknown}|null;data=await service.archiveEvaluationCriterion(owner,typeof input?.id==='string'?input.id:'');break;}
       case 'course': data=await service.createCourse(owner,body.input);break;
+      case 'manage-roster': data=await service.manageRoster(owner,body.input);break;
       case 'curriculum-sequence': data=await service.saveCurriculumSequence(owner,body.input);break;
       case 'sequence': {const input=body.input as {period?:unknown;sequence?:unknown}|null;if(typeof input?.period!=='string')throw new AppError(400,'Selecciona un período para guardar la secuencia.');data=await service.savePlanSequence(owner,input.period,input.sequence as NonNullable<import('@/lib/model').EvaluationPlan['sequence']>);break;}
       case 'plan': data=await service.updatePlan(owner,body.input as import('@/lib/model').EvaluationPlan);break;
