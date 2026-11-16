@@ -2,7 +2,7 @@ services:
   - type: web
     name: registro-docente
     runtime: node
-    plan: 0.5c-512mb
+    plan: free
     region: ohio
     buildCommand: npm ci --include=dev && npm run typecheck && npm test && npm run build
     preDeployCommand: npm run db:migrate

@@ -5,10 +5,17 @@ Aplicación para llevar asistencia, comportamiento observado, actividades, calif
 ## Estado actual
 
 - La vista local usa nombres ficticios y una base PostgreSQL embebida de prueba. No contiene la lista real ni notas de estudiantes.
+- El menú **Asistencia** separa la captura diaria, el registro mensual y el resumen semanal por estudiante. El registro mensual descarga un PDF tamaño carta con la cuadrícula de asistencia inspirada en el formulario MINERD de 5.º, más una nómina vinculada por número.
+- El PDF de demostración lleva marca de agua y no es entregable: usa nombres y registros sintéticos. La vista semanal cuenta P + T por semana; el registro mensual aplica la equivalencia de tres tardanzas por una ausencia.
+- El libro general abre por curso, pone cada evaluación en su columna, desglosa los criterios de rúbrica por competencia y separa conducta de participación.
+- La planificación de una actividad común se hace una vez para los tres cursos; la captura de notas sigue independiente para cada lista.
+- La vista **Desarrollo de calificaciones** muestra por estudiante el aporte de cada categoría, las evidencias por actividad y el desglose por competencia. En P2, las actividades de secuencia (20 puntos, máximo bruto 85) y la revisión diaria de libreta (20 puntos) se resumen juntas como **Libretas y tareas · 40**, conservando el aporte de cada una.
+- El plan P2 usa 35 puntos de exámenes (15 + 20), 20 de actividades de secuencia, 20 de libreta diaria, 15 de participación/conducta y 10 de prácticas para casa. La distribución de P1 aún necesita reconciliación: `Config_evaluacion` muestra 35/15/20/20/10, mientras la fórmula de `Notas` suma 90 puntos de actividades y añade el examen sobre 10.
+- La base local `teacher-preview-p2-calibrated` contiene una demostración ficticia P1–P4 en los tres cursos. Solo el plan P2 de la demo sigue los pesos del archivo de Matemática; P1, P3 y P4 usan reglas sintéticas para probar el sistema. Los máximos individuales asignados a las nueve actividades de secuencia de la demo también son sintéticos, aunque suman 85. El horario después del 20 de enero de 2027 es sintético y no corresponde a fechas oficiales.
 - Se creó un proyecto nuevo de Neon llamado `registro-docente`, en Ohio, con autenticación por correo y verificación OTP habilitadas. Todavía no se han cargado estudiantes.
 - `render.yaml` deja preparada una configuración de Render; aún no hay servicio publicado ni URL real.
-- El plan Render del archivo es de pago (`0.5c-512mb`) porque el nivel gratuito se suspende por inactividad y Render indica que no es para producción. La base Neon permanece separada y no depende del disco efímero de Render.
-- El plan de evaluación P2 sigue marcado como provisional hasta confirmar horario, cantidad de sesiones y criterios de la secuencia.
+- `render.yaml` usa el plan gratuito. Render suspende el servicio tras un periodo sin tráfico y puede tardar alrededor de un minuto en reactivarlo; la base Neon permanece separada y conserva los datos aunque Render use almacenamiento efímero.
+- En la base de demostración los cuatro períodos aparecen confirmados solo para probar fórmulas y flujo. Eso no confirma los planes reales del año ni modifica la base separada del docente.
 
 ## Desarrollo local
 
@@ -19,7 +26,7 @@ npm ci
 npm run dev
 ```
 
-La configuración local de demostración está en `.env.local` y no debe subirse al repositorio. La aplicación abre en `http://127.0.0.1:3000`; la vista de demostración usa una ruta local separada de cualquier futura conexión real a Neon.
+La configuración local de demostración está en `.env.local` y no debe subirse al repositorio. La aplicación abre en `http://127.0.0.1:3000`; la vista de demostración guarda su base en los datos locales de usuario, fuera del repositorio y separada de cualquier conexión real a Neon. `DEMO_DATABASE_PATH` permite elegir otra base ficticia y `DEMO_DATABASE_ROOT` cambiar su carpeta.
 
 ## Verificación
 

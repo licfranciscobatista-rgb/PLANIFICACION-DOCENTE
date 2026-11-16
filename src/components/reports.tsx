@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { downloadJson, useRemote } from "@/lib/client";
-import type { Course, EvaluationPlan, StudentReport } from "@/lib/model";
+import type { Course, CourseCompetencySummary, EvaluationPlan, StudentReport } from "@/lib/model";
 
 const numberFormat = new Intl.NumberFormat("es-DO", { maximumFractionDigits: 2 });
 const formatNumber = (value: number | null) => value === null ? "Pendiente" : numberFormat.format(value);
@@ -13,10 +13,21 @@ const formatDate = (value: string) => {
 };
 
 export default function ReportPanel({ course, plan }: { course: Course; plan: EvaluationPlan }) {
+  const summary = useRemote<CourseCompetencySummary>("competency-summary", { courseId: course.id });
   if (!course.students.length) {
-    return <section className="panel empty-state"><h2>Informe por estudiante</h2><p>Añade la lista de este curso para consultar sus informes.</p></section>;
+    return <><CompetencySummary summary={summary.data} error={summary.error} loading={summary.loading}/><section className="panel empty-state"><h2>Informe por estudiante</h2><p>Añade la lista de este curso para consultar sus informes.</p></section></>;
   }
-  return <StudentReportPanel key={course.id} course={course} plan={plan} />;
+  return <><CompetencySummary summary={summary.data} error={summary.error} loading={summary.loading}/><StudentReportPanel key={course.id} course={course} plan={plan} /></>;
+}
+
+function CompetencySummary({summary,error,loading}:{summary?:CourseCompetencySummary;error:string;loading:boolean}){
+  return <section className="panel competency-summary" aria-labelledby="competency-summary-title">
+    <div className="section-heading compact-heading"><div><p className="eyebrow">MATRIZ DEL CURSO · {summary?.period??"Período"}</p><h2 id="competency-summary-title">Resumen por competencia</h2><p className="muted">Una fila por estudiante; cada columna agrupa los puntos de evidencias que tienen esa competencia asignada.</p></div></div>
+    <p className="notice">El total suma los puntos capturados por competencia. La nota final ponderada se calcula aparte con las categorías del período; una celda vacía sigue siendo pendiente.</p>
+    {error&&<div className="notice warning" role="alert">{error}</div>}{loading&&!summary&&<div className="loading-state">Calculando el resumen del curso…</div>}
+    {summary&&<div className="table-wrap"><table className="data-table competency-matrix"><caption>{summary.course.code} · {summary.period}. Valores en puntos obtenidos / posibles.</caption><thead><tr><th>N.º</th><th>Estudiante</th>{summary.groups.map(group=><th key={group.key}>{group.label}</th>)}<th>Total</th></tr></thead><tbody>{summary.rows.map(row=><tr key={row.student.id}><td className="row-number">{String(row.student.number).padStart(2,"0")}</td><td className="student-name">{row.student.name}</td>{summary.groups.map(group=>{const item=row.competencies.find(value=>value.key===group.key);return <td key={group.key}>{item?`${formatNumber(item.points)} / ${formatNumber(item.possible)}`:"—"}{item?.pending? <small className="cell-description">{item.pending} pendiente(s)</small>:null}</td>})}<td><strong>{formatNumber(row.points)}</strong><small className="cell-description">/ {formatNumber(row.possible)}</small></td></tr>)}</tbody><tfoot><tr><th colSpan={2}>Curso · puntos acumulados</th>{summary.groups.map(group=>{const points=summary.rows.reduce((sum,row)=>sum+(row.competencies.find(value=>value.key===group.key)?.points??0),0);const possible=summary.rows.reduce((sum,row)=>sum+(row.competencies.find(value=>value.key===group.key)?.possible??0),0);return <th key={group.key}>{formatNumber(points)} / {formatNumber(possible)}</th>})}<th>{formatNumber(summary.rows.reduce((sum,row)=>sum+row.points,0))} / {formatNumber(summary.rows.reduce((sum,row)=>sum+row.possible,0))}</th></tr></tfoot></table></div>}
+    {summary&&<p className="footnote">{summary.note}</p>}
+  </section>;
 }
 
 function StudentReportPanel({ course, plan }: { course: Course; plan: EvaluationPlan }) {
@@ -28,7 +39,8 @@ function StudentReportPanel({ course, plan }: { course: Course; plan: Evaluation
   const report = data?.student.id === studentId && data.course.id === course.id ? data : null;
   const behavior = report?.timeline.map((entry) => ({ ...entry, label: `${formatDate(entry.date)} · B${entry.block}`, behavior: entry.sessionStatus === "impartida" ? entry.behavior : null })) ?? [];
   const categories = report?.categories.map(category => ({ name: category.label, weight: category.weight, points: category.points })) ?? [];
-  const labels = new Map(plan.categories.map(category => [category.key, category.label]));
+  const labels = new Map([...plan.categories.map(category => [category.key, category.label] as const), ["extra", "Puntos extra"] as const]);
+  const baseScore = report?.total !== null && report ? report.total - report.bonusPoints : report?.categories.some(category => category.points !== null) ? report.categories.reduce((sum, category) => sum + (category.points ?? 0), 0) : null;
 
   return <section aria-labelledby="student-report-title">
     <div className="section-heading">
@@ -55,8 +67,9 @@ function StudentReportPanel({ course, plan }: { course: Course; plan: Evaluation
     {report && !loading && <>
       <div className={`notice report-plan-notice ${report.plan.status === "provisional" ? "warning" : "success"}`}><strong>{report.plan.status === "provisional" ? "Evaluación provisional." : "Plan de evaluación confirmado."}</strong> {report.plan.note}<p>Una valoración pendiente se mantiene vacía. Una valoración de 0 se conserva como cero.</p></div>
       <div className="metrics">
-        <div className="metric"><span>Nota final</span><strong>{report.total === null ? "Pendiente" : `${formatNumber(report.total)} / 100`}</strong><small>{report.total === null ? "Faltan requisitos para cerrar la nota." : "Según el plan del período."}</small></div>
-        <div className="metric"><span>Puntos registrados</span><strong>{report.provisionalTotal === null ? "Pendiente" : `${formatNumber(report.provisionalTotal)} / 100`}</strong><small>Avance provisional; no sustituye la nota final.</small></div>
+        <div className="metric"><span>Base ponderada</span><strong>{baseScore === null ? "Pendiente" : `${formatNumber(baseScore)} / 100`}</strong><small>{report.total === null ? "Faltan requisitos para cerrar las cinco categorías." : "Nota base según el plan del período."}</small></div>
+        <div className="metric"><span>Puntos extra</span><strong>{formatNumber(report.bonusPoints)} / {formatNumber(report.bonusPossible)}</strong><small>Se suman aparte; no cambian los pesos del plan.</small></div>
+        <div className="metric"><span>Acumulado con extra</span><strong>{report.provisionalTotal === null ? "Pendiente" : formatNumber(report.provisionalTotal)}</strong><small>{report.total === null ? "Acumulado provisional; base de 100 más extra." : "Base de 100 más los puntos extra registrados."}</small></div>
         <div className="metric"><span>Asistencia</span><strong>{report.attendance.percent === null ? "Pendiente" : `${formatNumber(report.attendance.percent)} %`}</strong><small>{report.attendance.sessions} sesiones · {report.attendance.pending} registros pendientes</small></div>
       </div>
       <div className="metrics" aria-label="Conteo de asistencia">
@@ -73,7 +86,7 @@ function StudentReportPanel({ course, plan }: { course: Course; plan: Evaluation
           </ResponsiveContainer>
         </div> : <div className="empty-state">Todavía no hay valoraciones de comportamiento en sesiones impartidas.</div>}
         <div className="table-wrap"><table className="data-table"><caption>Detalle de comportamiento y asistencia</caption><thead><tr><th>Fecha</th><th>Bloque</th><th>Clase</th><th>Asistencia</th><th>Comportamiento / 10</th></tr></thead><tbody>
-          {report.timeline.length === 0 ? <tr><td colSpan={5}>Sin sesiones registradas.</td></tr> : report.timeline.map(entry => <tr key={`${entry.date}-${entry.block}`}><td>{formatDate(entry.date)}</td><td>{entry.block}</td><td>{entry.sessionStatus === "impartida" ? "Impartida" : entry.sessionStatus === "programada" ? "Programada" : "No impartida"}</td><td>{entry.status ?? "Pendiente"}</td><td>{formatNumber(entry.behavior)}</td></tr>)}
+          {report.timeline.length === 0 ? <tr><td colSpan={5}>Sin sesiones registradas.</td></tr> : report.timeline.map(entry => <tr key={`${entry.date}-${entry.block}`}><td>{formatDate(entry.date)}</td><td>{entry.block}</td><td>{entry.sessionStatus === "impartida" ? "Impartida" : entry.sessionStatus === "programada" ? "Programada" : entry.sessionStatus === "no_programada" ? "No programada" : "No impartida"}</td><td>{entry.status ?? "Pendiente"}</td><td>{formatNumber(entry.behavior)}</td></tr>)}
         </tbody></table></div>
       </section>
       <section className="panel" aria-labelledby="category-chart-title">
@@ -90,7 +103,7 @@ function StudentReportPanel({ course, plan }: { course: Course; plan: Evaluation
         </tbody></table></div>
       </section>
       <section className="panel" aria-labelledby="activity-report-title"><h3 id="activity-report-title">Actividades y calificaciones</h3>
-        <div className="table-wrap"><table className="data-table"><caption>Calificaciones originales del estudiante, sin convertir vacíos en ceros</caption><thead><tr><th>Actividad</th><th>Fecha</th><th>Categoría</th><th>Nota</th><th>Máximo</th><th>Cálculo</th><th>Comentario</th></tr></thead><tbody>
+        <div className="table-wrap"><table className="data-table"><caption>Calificaciones originales del estudiante, sin convertir vacíos en ceros</caption><thead><tr><th>Actividad</th><th>Creada</th><th>Categoría</th><th>Nota</th><th>Máximo</th><th>Cálculo</th><th>Comentario</th></tr></thead><tbody>
           {report.grades.length === 0 ? <tr><td colSpan={7}>No hay actividades creadas para este estudiante.</td></tr> : report.grades.map(grade => <tr key={grade.activityId}><td>{grade.title}</td><td>{formatDate(grade.date)}</td><td>{labels.get(grade.category) ?? grade.category}</td><td>{formatNumber(grade.score)}</td><td>{formatNumber(grade.maxPoints)}</td><td><span className="pill">{grade.included ? "Incluida" : "Fuera del cálculo"}</span></td><td>{grade.comment || "—"}</td></tr>)}
         </tbody></table></div>
       </section>

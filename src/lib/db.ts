@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { PGlite } from "@electric-sql/pglite";
 import { mkdir, readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 export interface QueryResult<R> { rows: R[]; rowCount: number }
@@ -43,7 +44,11 @@ export function getDatabase(): Promise<DBAdapter> {
  if (!database) database = (async () => {
   if (process.env.DATABASE_URL) return createPostgresDatabase(process.env.DATABASE_URL);
   if (process.env.DEMO_MODE === "true" && !process.env.RENDER && !process.env.RENDER_SERVICE_ID) {
-   const demoPath = process.env.DEMO_DATABASE_PATH === "preview" ? path.join(process.cwd(), ".local", "preview-clean") : path.join(process.cwd(), ".local", "demo-postgres");
+   const configuredName = process.env.DEMO_DATABASE_PATH;
+   const databaseName = configuredName === "preview" ? "preview-clean" : configuredName || "demo-postgres";
+   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(databaseName)) throw new Error("DEMO_DATABASE_PATH debe ser un nombre simple de base local.");
+   const userData = process.env.DEMO_DATABASE_ROOT || path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), ".local", "share"), "RegistroDocente");
+   const demoPath = path.join(userData, databaseName);
    return createTestDatabase(demoPath);
   }
   throw new Error("Falta DATABASE_URL. La base local solo se permite con DEMO_MODE=true fuera de Render.");

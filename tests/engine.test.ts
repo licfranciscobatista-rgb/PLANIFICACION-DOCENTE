@@ -9,6 +9,9 @@ test('el estado respeta fecha y existencia de marcas, incluso cuando todos falta
   assert.equal(sessionStatus('2026-11-02', ['E', null], '2026-11-13'), 'impartida');
   assert.equal(sessionStatus('2026-11-13', ['P', null], '2026-11-13'), 'impartida');
   assert.equal(sessionStatus('2026-11-14', [null, null], '2026-11-13'), 'programada');
+  assert.equal(sessionStatus('2026-11-12', ['R'], '2026-11-13'), 'no_impartida');
+  assert.equal(sessionStatus('2026-11-12', ['R','A'], '2026-11-13'), 'impartida');
+  assert.equal(sessionStatus('2026-11-14', ['R'], '2026-11-13'), 'programada');
 });
 
 test('la fecha inicial autorizada es el 20 de octubre y las fechas imposibles se rechazan', () => {
@@ -45,6 +48,21 @@ test('la rúbrica diferencia el nivel mínimo de cero y conserva los descriptore
   assert.throws(() => rubricScore(criteria, { reasoning: 4 }), AppError);
   assert.throws(() => rubricScore(criteria, {}), AppError);
   assert.throws(() => rubricMaximum([...criteria, ...criteria]), AppError);
+});
+
+test('el cálculo acepta escalas fuente de 0–0.5–1, 0–1–2 y 0–1–2–3', () => {
+  const half = [{ id: 'half', label: 'Clasifica', levels: [{ label: 'No logrado', points: 0 }, { label: 'Parcial', points: 0.5 }, { label: 'Logrado', points: 1 }] }];
+  const two = [{ id: 'two', label: 'Resuelve', levels: [{ label: 'Sin evidencia', points: 0 }, { label: 'Parcial', points: 1 }, { label: 'Correcto', points: 2 }] }];
+  const three = [{ id: 'three', label: 'Justifica', levels: [{ label: 'Sin evidencia', points: 0 }, { label: 'Avance', points: 1 }, { label: 'Incompleto', points: 2 }, { label: 'Completo', points: 3 }] }];
+  assert.equal(rubricMaximum(half), 1);
+  assert.equal(rubricScore(half, { half: 0 }), 0);
+  assert.equal(rubricScore(half, { half: 1 }), 0.5);
+  assert.equal(rubricScore(half, { half: 2 }), 1);
+  assert.equal(rubricMaximum(two), 2);
+  assert.equal(rubricScore(two, { two: 2 }), 2);
+  assert.equal(rubricMaximum(three), 3);
+  assert.equal(rubricScore(three, { three: 3 }), 3);
+  assert.throws(() => rubricScore(half, { half: 3 }), AppError);
 });
 
 test('el identificador de contenido no depende del orden de las claves, pero sí de los valores', () => {

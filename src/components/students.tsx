@@ -2,8 +2,75 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
+import { Activity, CalendarCheck2, Check, FileSpreadsheet, LoaderCircle, Upload } from "lucide-react";
 import { apiPost, downloadJson } from "@/lib/client";
 import type { Course, RosterRow } from "@/lib/model";
+
+type RosterWorkbookReview = {
+  fileName: string;
+  parsed: { courses: { courseCode: string; sheetName: string; rows: RosterRow[] }[] };
+  review: { courses: { courseId: string; courseCode: string; added: number; updated: number; total: number; retained: number }[]; conflicts: { courseCode: string; message: string }[] };
+};
+
+async function sendRosterWorkbook(file: File, mode: "preview" | "import") {
+  const form = new FormData(); form.append("file", file); form.append("mode", mode);
+  const response = await fetch("/api/registro/roster-workbook", { method: "POST", body: form, cache: "no-store" });
+  const result = await response.json() as { data?: RosterWorkbookReview | { fileName: string; result: { students: number; courses: { courseCode: string; added: number; updated: number; total: number; retained: number }[] } }; error?: string };
+  if (!response.ok) throw new Error(result.error || "No se pudo completar la operación.");
+  return result.data;
+}
+
+export function RosterWorkbookImportPanel({ courses, onChange }: { courses: Course[]; onChange: () => void }) {
+  const fileId = useId();
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<RosterWorkbookReview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  async function analyze() {
+    if (!file) { setError("Selecciona el libro Excel de Matemática."); return; }
+    if (file.size > 25 * 1024 * 1024) { setError("El libro supera el límite de 25 MB."); return; }
+    setBusy(true); setError(""); setSuccess(""); setPreview(null);
+    try { setPreview(await sendRosterWorkbook(file, "preview") as RosterWorkbookReview); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo leer el libro."); }
+    finally { setBusy(false); }
+  }
+
+  async function importAll() {
+    if (!file || !preview || preview.review.conflicts.length) return;
+    setBusy(true); setError(""); setSuccess("");
+    try {
+      const result = await sendRosterWorkbook(file, "import") as { fileName: string; result: { students: number; courses: { courseCode: string; added: number; updated: number; total: number; retained: number }[] } };
+      setSuccess(`Se guardaron ${result.result.students} estudiantes en ${result.result.courses.length} cursos. La operación fue atómica; ningún registro anterior se eliminó.`);
+      setPreview(null); setFile(null); onChange();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo guardar la nómina. No se aplicó una parte del lote."); }
+    finally { setBusy(false); }
+  }
+
+  const listedCodes = courses.map(course => course.code.toLocaleUpperCase()).sort();
+  const workbookCodes = preview?.parsed.courses.map(course => course.courseCode).sort() ?? [];
+  const courseMismatch = preview && JSON.stringify(listedCodes) !== JSON.stringify(workbookCodes);
+  const canImport = Boolean(preview && !courseMismatch && !preview.review.conflicts.length && preview.parsed.courses.length === courses.length);
+
+  return <section className="panel roster-workbook-import">
+    <div className="roster-workbook-heading"><div><p className="eyebrow">CARGA INICIAL DE NÓMINAS</p><h2><FileSpreadsheet size={18}/> Importar las listas del libro de Matemática</h2><p>Lee las pestañas de cada curso y guarda las listas juntas en una sola operación. El libro original no se modifica y sus macros no se ejecutan.</p></div><Upload size={20}/></div>
+    <div className="roster-workbook-controls"><label htmlFor={fileId}>Libro Excel (.xlsx o .xlsm)<input id={fileId} type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" disabled={busy} onChange={event => { setFile(event.target.files?.[0] ?? null); setPreview(null); setError(""); setSuccess(""); }}/></label><button type="button" className="button secondary" onClick={() => void analyze()} disabled={busy || !file}>{busy ? <LoaderCircle className="spin" size={16}/> : <FileSpreadsheet size={16}/>} Analizar libro</button></div>
+    <p className="muted roster-workbook-note">La pestaña debe llamarse igual que el código del curso y contener encabezados de número/ID y estudiante/nombre. El número organiza la lista; la app crea una identidad interna a partir del nombre para que cambiar el orden no mueva su historial. Los alumnos no incluidos nunca se borran.</p>
+    {error && <div className="notice warning" role="alert">{error}</div>}
+    {success && <div className="notice success" role="status"><Check size={16}/>{success}</div>}
+    {preview && <div className="roster-workbook-preview">
+      <div className="table-toolbar"><div><h3>Revisión antes de guardar</h3><p className="muted">{preview.fileName} · {preview.parsed.courses.reduce((sum, course) => sum + course.rows.length, 0)} estudiantes detectados</p></div><span className={'pill '+(canImport ? '' : 'provisional')}>{canImport ? 'Sin conflictos' : 'Requiere revisión'}</span></div>
+      {courseMismatch && <div className="notice warning" role="alert">Los códigos de las pestañas ({workbookCodes.join(", ")}) no coinciden con los cursos de este registro ({listedCodes.join(", ")}). No se guardó nada.</div>}
+      {preview.review.conflicts.length > 0 && <div className="notice warning" role="alert"><strong>No aplicaré filas que puedan mezclar identidades:</strong><ul>{preview.review.conflicts.map((conflict, index) => <li key={`${conflict.courseCode}-${index}`}>{conflict.courseCode}: {conflict.message}</li>)}</ul></div>}
+      <div className="roster-workbook-course-grid">{preview.parsed.courses.map(item => {
+        const stats = preview.review.courses.find(course => course.courseCode === item.courseCode);
+        return <details className="roster-workbook-course" key={item.courseCode}><summary><strong>{item.courseCode}</strong><span>{item.rows.length} estudiantes</span><small>{stats ? `${stats.added} nuevas · ${stats.updated} actualizaciones · ${stats.retained} anteriores conservados` : 'Curso no encontrado'}</small></summary><div className="table-wrap"><table className="data-table"><thead><tr><th>N.º</th><th>Estudiante</th></tr></thead><tbody>{item.rows.map(row => <tr key={row.externalId}><td>{row.number}</td><td>{row.name}</td></tr>)}</tbody></table></div></details>;
+      })}</div>
+      <div className="toolbar roster-workbook-actions"><button type="button" className="button primary" disabled={busy || !canImport} onClick={() => void importAll()}>{busy ? <LoaderCircle className="spin" size={16}/> : <Check size={16}/>} Guardar nóminas de todos los cursos</button><button type="button" className="button secondary" disabled={busy} onClick={() => { setPreview(null); setFile(null); }}>Descartar revisión</button></div>
+    </div>}
+  </section>;
+}
 
 type ParsedRoster = { rows: RosterRow[]; errors: string[] };
 
@@ -70,7 +137,7 @@ function validateRoster(rows: RosterRow[], course: Course) {
   return [...new Set(errors)];
 }
 
-export default function StudentPanel({ course, onChange }: { course: Course; onChange: () => void }) {
+export default function StudentPanel({ course, onChange, onOpenAttendance, onOpenBehavior }: { course: Course; onChange: () => void; onOpenAttendance: () => void; onOpenBehavior: () => void }) {
   const [parsed, setParsed] = useState<ParsedRoster | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -117,7 +184,7 @@ export default function StudentPanel({ course, onChange }: { course: Course; onC
   }
 
   return <section aria-labelledby="students-title">
-    <div className="section-heading"><div><p className="eyebrow">Lista e identidad</p><h2 id="students-title">Estudiantes de {course.code}</h2><p className="muted">{students.length} estudiantes. Cada ID mantiene vinculadas sus asistencias y sus notas.</p></div><button className="button secondary" type="button" onClick={() => downloadJson(`lista-${course.code}.json`, students.map(student => ({ id: student.externalId, numero: student.number, nombre: student.name })))}>Descargar lista</button></div>
+    <div className="section-heading"><div><p className="eyebrow">Lista e identidad</p><h2 id="students-title">Estudiantes de {course.code}</h2><p className="muted">{students.length} estudiantes. Esta lista alimenta los registros del curso de asistencia, comportamiento y calificaciones.</p></div><div className="toolbar"><button className="button secondary" type="button" onClick={() => downloadJson(`lista-${course.code}.json`, students.map(student => ({ id: student.externalId, numero: student.number, nombre: student.name })))}>Descargar lista</button><button className="button secondary" type="button" disabled={!students.some(student=>student.active)} onClick={onOpenAttendance}><CalendarCheck2 size={16}/> Asistencia</button><button className="button primary" type="button" disabled={!students.some(student=>student.active)} onClick={onOpenBehavior}><Activity size={16}/> Comportamiento</button></div></div>
     {error && <div className="notice error" role="alert">{error}</div>}
     {success && <div className="notice success" role="status">{success}</div>}
     <div className="panel">

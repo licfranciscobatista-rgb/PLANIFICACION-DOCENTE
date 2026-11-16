@@ -1,9 +1,14 @@
 node_modules/
 .next/
+.next*/
+.next-empty-workspace-20261115/
 .env*
 !.env.example
 .local/
 private/
+output/
+tmp/
+*.log
 test-results/
 playwright-report/
 *.tsbuildinfo
