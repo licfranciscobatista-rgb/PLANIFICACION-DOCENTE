@@ -179,3 +179,16 @@ CREATE INDEX IF NOT EXISTS idx_activity_shared ON activities(owner_id,shared_id)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_notebook ON activities(owner_id,course_id,activity_date,block) WHERE category='notebook';
 CREATE INDEX IF NOT EXISTS idx_audit_owner_date ON audit_entries(owner_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evaluation_criteria_owner ON evaluation_criteria(owner_id,active,label);
+CREATE TABLE IF NOT EXISTS period_score_plans (
+ owner_id text NOT NULL, period text NOT NULL, revision integer NOT NULL DEFAULT 0,
+ enabled boolean NOT NULL DEFAULT false, columns jsonb NOT NULL DEFAULT '[]'::jsonb,
+ PRIMARY KEY(owner_id,period),
+ FOREIGN KEY(owner_id) REFERENCES workspaces(owner_id)
+);
+CREATE TABLE IF NOT EXISTS period_scores (
+ owner_id text NOT NULL, period text NOT NULL, course_id uuid NOT NULL, student_id uuid NOT NULL,
+ column_id uuid NOT NULL, score numeric CHECK(score>=0 AND score<=100),
+ PRIMARY KEY(owner_id,period,course_id,student_id,column_id),
+ FOREIGN KEY(owner_id,period) REFERENCES period_score_plans(owner_id,period),
+ FOREIGN KEY(student_id,course_id,owner_id) REFERENCES students(id,course_id,owner_id)
+);

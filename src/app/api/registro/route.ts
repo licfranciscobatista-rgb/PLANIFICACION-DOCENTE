@@ -43,6 +43,7 @@ export async function GET(req:NextRequest) {
       case 'report': data=await service.report(owner,q.get('courseId')||'',q.get('studentId')||''); break;
       case 'competency-summary': data=await service.competencySummary(owner,q.get('courseId')||''); break;
       case 'teacher-ledger': data=await service.teacherLedger(owner,q.get('period')||undefined); break;
+      case 'period-sheet': data=await service.periodSheet(owner,q.get('period')||'P2',q.get('courseId')||'');break;
       case 'audit': data=await service.audit(owner); break;
       case 'export': return new NextResponse(JSON.stringify(await service.exportData(owner),null,2),{headers:{...headers,'Content-Type':'application/json; charset=utf-8','Content-Disposition':'attachment; filename="registro-docente-respaldo.json"'}});
       default: return NextResponse.json({error:'Operación no reconocida.'},{status:400,headers});
@@ -70,6 +71,8 @@ export async function POST(req:NextRequest) {
       case 'archive-criterion': {const input=body.input as {id?:unknown}|null;data=await service.archiveEvaluationCriterion(owner,typeof input?.id==='string'?input.id:'');break;}
       case 'course': data=await service.createCourse(owner,body.input);break;
       case 'manage-roster': data=await service.manageRoster(owner,body.input);break;
+      case 'period-sheet-plan': data=await service.savePeriodSheetPlan(owner,body.input);break;
+      case 'period-sheet-grades': data=await service.savePeriodSheetGrades(owner,body.input);break;
       case 'curriculum-sequence': data=await service.saveCurriculumSequence(owner,body.input);break;
       case 'sequence': {const input=body.input as {period?:unknown;sequence?:unknown}|null;if(typeof input?.period!=='string')throw new AppError(400,'Selecciona un período para guardar la secuencia.');data=await service.savePlanSequence(owner,input.period,input.sequence as NonNullable<import('@/lib/model').EvaluationPlan['sequence']>);break;}
       case 'plan': data=await service.updatePlan(owner,body.input as import('@/lib/model').EvaluationPlan);break;
