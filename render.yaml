@@ -5,8 +5,7 @@ services:
     plan: free
     region: ohio
     buildCommand: npm ci --include=dev && npm run typecheck && npm test && npm run build
-    preDeployCommand: npm run db:migrate
-    startCommand: npm start
+    startCommand: npm run db:migrate && npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
