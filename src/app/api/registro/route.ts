@@ -39,6 +39,7 @@ export async function GET(req:NextRequest) {
         return new NextResponse(body,{headers:{...headers,'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="${filename}"`,'Content-Length':String(bytes.byteLength)}});
       }
       case 'grades': data=await service.grades(owner,q.get('activityId')||''); break;
+      case 'indicator-usage': data=await service.indicatorUsage(owner); break;
       case 'report': data=await service.report(owner,q.get('courseId')||'',q.get('studentId')||''); break;
       case 'competency-summary': data=await service.competencySummary(owner,q.get('courseId')||''); break;
       case 'teacher-ledger': data=await service.teacherLedger(owner,q.get('period')||undefined); break;

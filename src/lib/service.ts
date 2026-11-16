@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { DBAdapter } from "./db";
-import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan } from "./model";
+import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, IndicatorUsageRecord, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan } from "./model";
 import { payloadHash, plan, requireDate, round, rubricMaximum, rubricScore, sessionStatus, todayInSchool } from "./engine";
 import classCalendar from "./data/class-schedule-2026-27.json";
 
@@ -752,6 +752,21 @@ export class RegistroService {
   return { activity: a, rows };
  }
  async grades(ownerId: string, activityId: string): Promise<GradesView> { await this.ensureOwner(ownerId); return this.gradesView(ownerId, activityId, this.db); }
+ async indicatorUsage(ownerId:string):Promise<IndicatorUsageRecord[]>{
+  await this.ensureOwner(ownerId);
+  const activities=(await this.db.query(`SELECT a.id,a.shared_id,a.course_id,c.code AS course_code,a.period,a.title,a.max_points,a.indicator_points FROM activities a JOIN courses c ON c.id=a.course_id AND c.owner_id=a.owner_id WHERE a.owner_id=$1 ORDER BY a.period,a.activity_date,a.title,a.course_id`,[ownerId])).rows;
+  const gradeRows=(await this.db.query(`SELECT activity_id,COUNT(*) FILTER (WHERE score IS NOT NULL)::integer AS graded_students,COUNT(*) FILTER (WHERE score IS NOT NULL OR (jsonb_typeof(criterion_levels)='object' AND criterion_levels<>'{}'::jsonb) OR comment<>'')::integer AS students_with_data FROM grades WHERE owner_id=$1 GROUP BY activity_id`,[ownerId])).rows;
+  const rosterRows=(await this.db.query(`SELECT course_id,COUNT(*)::integer AS students_in_course FROM students WHERE owner_id=$1 AND active=true GROUP BY course_id`,[ownerId])).rows;
+  const gradesByActivity=new Map(gradeRows.map(row=>[str(row.activity_id),row]));
+  const rosterByCourse=new Map(rosterRows.map(row=>[str(row.course_id),Number(row.students_in_course)||0]));
+  const records:IndicatorUsageRecord[]=[];
+  for(const activity of activities){
+   const activityId=str(activity.id),sharedId=str(activity.shared_id),courseId=str(activity.course_id),grade=gradesByActivity.get(activityId);
+   const allocations=json<ActivityIndicatorPoint[]>(activity.indicator_points,[]);
+   for(const allocation of allocations)records.push({indicatorId:allocation.indicatorId,code:allocation.code,label:allocation.label,competency:allocation.competency,assignmentId:sharedId||activityId,activityId,courseId,courseCode:str(activity.course_code),period:str(activity.period),title:str(activity.title),maxPoints:Number(activity.max_points)||0,points:Number(allocation.points)||0,studentsWithData:Number(grade?.students_with_data)||0,gradedStudents:Number(grade?.graded_students)||0,studentsInCourse:rosterByCourse.get(courseId)||0});
+  }
+  return records;
+ }
  async saveGrades(ownerId: string, input: GradesInput): Promise<SaveReceipt> {
   const v = parse(gradesSchema, input); await this.ensureOwner(ownerId);
   return this.operation(ownerId, v.requestId, { operation: "grades", ...v }, async (tx, operationId) => {

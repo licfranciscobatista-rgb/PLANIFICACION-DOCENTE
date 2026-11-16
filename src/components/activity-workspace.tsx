@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, BookOpenCheck, Check, ClipboardList, FileText, LoaderCircle, Plus, Save, Settings2, Trash2, Upload, X } from 'lucide-react';
-import { COMPETENCY_GROUPS, type Activity, type ActivityCategoryKey, type Bootstrap, type CompetencyKey, type EvaluationCriterion, type EvaluationPlan, type EvaluationPurpose, type RubricCriterion, type RubricLevel, type SequenceActivity, type SequenceIndicator, type SequencePlan, type SourceAssessmentInstrument } from '@/lib/model';
-import { apiPost, errorText, formatDate } from '@/lib/client';
+import { COMPETENCY_GROUPS, type Activity, type ActivityCategoryKey, type Bootstrap, type CompetencyKey, type EvaluationCriterion, type EvaluationPlan, type EvaluationPurpose, type IndicatorUsageRecord, type RubricCriterion, type RubricLevel, type SequenceActivity, type SequenceIndicator, type SequencePlan, type SourceAssessmentInstrument } from '@/lib/model';
+import { apiPost, errorText, formatDate, useRemote } from '@/lib/client';
 import { proposeActivities, proposeSequenceFromPdfPages } from '@/lib/sequence-import';
 import { parseRubricWorkbook, type ImportedRubricCriterion } from '@/lib/rubric-import';
 
@@ -80,6 +80,7 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
   const [criterionLevels, setCriterionLevels] = useState<LevelDraft[]>(LEVELS);
   const [criterionBusy, setCriterionBusy] = useState(false);
   const [criterionError, setCriterionError] = useState('');
+  const indicatorUsage = useRemote<IndicatorUsageRecord[]>('indicator-usage', {}, section === 'indicators');
 
   useEffect(() => {
     setSequenceDraft(curriculumSequence ?? { source: 'manual', sourceName: '', sourceText: '', reviewed: false, activities: [], indicators: [] });
@@ -157,7 +158,7 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
       onSection('all'); onChange();
     } catch (error) { setSequenceError(errorText(error)); } finally { setSequenceBusy(false); }
   }
-  async function saveSequence(reviewed: boolean, reason?: 'indicators') {
+  async function saveSequence(reviewed: boolean, reason?: 'indicators'): Promise<boolean> {
     const wasReviewed=sequenceDraft.reviewed;
     setSequenceBusy(true); setSequenceError(''); setSequenceNotice('');
     try {
@@ -167,8 +168,8 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
         if (missing) throw new Error(`Completa el nombre y qué se trabajará en “${missing.title || 'la actividad'}”.`);
       }
       const saved = await apiPost<SequencePlan>('curriculum-sequence', { ...sequenceDraft, reviewed });
-      setSequenceDraft(saved); setPeriodAssignmentsDirty(false); setSequenceNotice(reason === 'indicators' ? 'Catálogo de indicadores guardado sin asignarlos a evaluaciones.' : reviewed ? wasReviewed ? 'Distribución y período de planificación guardados.' : 'Revisión guardada. Activa un período para distribuir la secuencia.' : 'Borrador de secuencia guardado.'); if(reviewed&&!wasReviewed&&reason!=='indicators')onSection('all'); onChange();
-    } catch (error) { setSequenceError(errorText(error)); } finally { setSequenceBusy(false); }
+      setSequenceDraft(saved); setPeriodAssignmentsDirty(false); setSequenceNotice(reason === 'indicators' ? 'Catálogo de indicadores guardado sin asignarlos a evaluaciones.' : reviewed ? wasReviewed ? 'Distribución y período de planificación guardados.' : 'Revisión guardada. Activa un período para distribuir la secuencia.' : 'Borrador de secuencia guardado.'); if(reviewed&&!wasReviewed&&reason!=='indicators')onSection('all'); onChange(); return true;
+    } catch (error) { setSequenceError(errorText(error)); return false; } finally { setSequenceBusy(false); }
   }
   function addSequenceActivity() {
     setSequenceDraft(current => ({ ...current, reviewed: false, activities: [...current.activities, { id: newId(), code: '', theme: '', title: '', lessonType: null, description: '', evidence: '', indicatorIds: [], period: '' }] }));
@@ -231,7 +232,7 @@ export function ActivityWorkspace({ courses, activities, plan, plans, curriculum
       <SequenceSection draft={sequenceDraft} mode={sequenceMode} setMode={setSequenceMode} busy={sequenceBusy} fileBusy={fileBusy} error={sequenceError} notice={sequenceNotice} allowManualOnly={!curriculumSequence||curriculumSequence.planningMode==='manual'&&!curriculumSequence.activities.length&&!curriculumSequence.indicators.length} onImport={importSequence} onCreateManual={startManualSequence} onContinueWithoutSequence={continueWithoutSequence} onAddActivity={addSequenceActivity} onUpdateActivity={updateSequenceActivity} onRemoveActivity={id => setSequenceDraft(current => ({ ...current, reviewed:false, activities:current.activities.filter(item => item.id !== id) }))} onSave={saveSequence}/>
     </>}
     {visibleSection === 'criteria' && <CriteriaSection criteria={criteria} loaded={criteriaLoaded} showForm={showCriterionForm} setShowForm={setShowCriterionForm} id={criterionId} setId={setCriterionId} label={criterionLabel} setLabel={setCriterionLabel} levels={criterionLevels} setLevels={setCriterionLevels} busy={criterionBusy} error={criterionError} onSave={saveCriterion} onImport={importCriteria} onEdit={item => { setCriterionId(item.id); setCriterionLabel(item.label); setCriterionLevels(item.levels.map(level => ({ ...level, description:level.description??'' }))); setShowCriterionForm(true); }} onArchive={archiveCriterion}/>}
-    {visibleSection === 'indicators' && <IndicatorsSection indicators={sequenceDraft.indicators} busy={sequenceBusy} error={sequenceError} notice={sequenceNotice} onAdd={addIndicator} onUpdate={updateIndicator} onRemove={id => setSequenceDraft(current => ({ ...current, indicators:current.indicators.filter(item => item.id !== id), activities:current.activities.map(item => ({ ...item, indicatorIds:item.indicatorIds.filter(value => value !== id) })) }))} onSave={() => void saveSequence(sequenceDraft.reviewed, 'indicators')}/>}
+    {visibleSection === 'indicators' && <IndicatorsSection indicators={sequenceDraft.indicators} usage={indicatorUsage.data??[]} usageLoading={indicatorUsage.loading} usageError={indicatorUsage.error} busy={sequenceBusy} error={sequenceError} notice={sequenceNotice} onAdd={addIndicator} onUpdate={updateIndicator} onRemove={id => setSequenceDraft(current => ({ ...current, indicators:current.indicators.filter(item => item.id !== id), activities:current.activities.map(item => ({ ...item, indicatorIds:item.indicatorIds.filter(value => value !== id) })) }))} onSave={() => saveSequence(sequenceDraft.reviewed, 'indicators')}/>}
     {visibleSection === 'all' && canOpenPeriods && <>
       {!sequenceDraft.reviewed && <div className="notice">No hay una secuencia confirmada. Puedes crear actividades manuales ahora; si luego revisas una secuencia, podrás vincular otras actividades a sus indicadores.</div>}
       {sequenceDraft.reviewed && <>
@@ -281,14 +282,49 @@ function SequenceSection({draft,mode,setMode,busy,fileBusy,error,notice,allowMan
   </section>;
 }
 
-function IndicatorsSection({indicators,busy,error,notice,onAdd,onUpdate,onRemove,onSave}:{indicators:SequenceIndicator[];busy:boolean;error:string;notice:string;onAdd:()=>void;onUpdate:(id:string,patch:Partial<SequenceIndicator>)=>void;onRemove:(id:string)=>void;onSave:()=>void}){
-  return <section className="panel sequence-workspace"><div className="table-toolbar"><div><h2>Catálogo de indicadores</h2><p className="muted">Guárdalos aquí sin asignarlos a una actividad. Al crear la evaluación, elegirás cuáles corresponden y distribuirás sus puntos.</p></div><button type="button" className="button secondary" onClick={onAdd}><Plus size={15}/> Añadir indicador</button></div>
-    {indicators.map((indicator,index)=><div className="sequence-indicator-row" key={indicator.id}><label><small>Código</small><input maxLength={80} value={indicator.code} onChange={event=>onUpdate(indicator.id,{code:event.target.value})} placeholder={`I${index+1}`}/></label><label><small>Indicador de logro</small><input maxLength={500} value={indicator.label} onChange={event=>onUpdate(indicator.id,{label:event.target.value})} placeholder="Describe el logro observable"/></label><label><small>Competencia</small><select value={indicator.competency??''} onChange={event=>onUpdate(indicator.id,{competency:event.target.value?event.target.value as CompetencyKey:null})}><option value="">Sin asignar</option>{COMPETENCY_GROUPS.map(item=><option key={item.key} value={item.key}>{item.label}</option>)}</select></label><button type="button" className="icon-button" aria-label={`Quitar indicador ${indicator.code||index+1}`} onClick={()=>onRemove(indicator.id)}><Trash2 size={15}/></button></div>)}
-    {!indicators.length&&<div className="empty-state compact"><h3>No hay indicadores cargados</h3><p>Al importar una secuencia se guardarán aquí cuando el documento los incluya. También puedes agregarlos manualmente.</p></div>}
-    {indicators.some(item=>!item.competency)&&<div className="notice warning" role="status">Hay indicadores pendientes de asociar con una competencia. Completa esa relación antes de usarlos para calificar.</div>}
-    {error&&<div className="notice warning" role="alert">{error}</div>}{notice&&<div className="notice success" role="status">{notice}</div>}
-    <div className="sequence-save-actions"><button type="button" className="button primary" disabled={busy} onClick={onSave}>{busy?<LoaderCircle className="spin" size={15}/>:<Save size={15}/>} Guardar catálogo</button></div>
-  </section>;
+function IndicatorsSection({indicators,usage,usageLoading,usageError,busy,error,notice,onAdd,onUpdate,onRemove,onSave}:{indicators:SequenceIndicator[];usage:IndicatorUsageRecord[];usageLoading:boolean;usageError:string;busy:boolean;error:string;notice:string;onAdd:()=>void;onUpdate:(id:string,patch:Partial<SequenceIndicator>)=>void;onRemove:(id:string)=>void;onSave:()=>Promise<boolean>}){
+  const [editing,setEditing]=useState(indicators.length===0);
+  const [dirty,setDirty]=useState(false);
+  useEffect(()=>{if(dirty||usageLoading)return;if(indicators.length)setEditing(false);else setEditing(usage.length===0);},[dirty,indicators.length,usage.length,usageLoading]);
+  const summaries=useMemo(()=>{
+    type Assignment={key:string;title:string;period:string;maxPoints:number;points:number;courses:Map<string,IndicatorUsageRecord>};
+    type Summary={indicator:SequenceIndicator;inCatalog:boolean;assignments:Map<string,Assignment>};
+    const result=new Map<string,Summary>();
+    for(const indicator of indicators)result.set(indicator.id,{indicator,inCatalog:true,assignments:new Map()});
+    for(const item of usage){
+      let summary=result.get(item.indicatorId);
+      if(!summary){summary={indicator:{id:item.indicatorId,code:item.code,label:item.label,competency:item.competency},inCatalog:false,assignments:new Map()};result.set(item.indicatorId,summary);}
+      let assignment=summary.assignments.get(item.assignmentId);
+      if(!assignment){assignment={key:item.assignmentId,title:item.title,period:item.period,maxPoints:item.maxPoints,points:item.points,courses:new Map()};summary.assignments.set(item.assignmentId,assignment);}
+      assignment.courses.set(item.courseId,item);
+    }
+    return [...result.values()].sort((a,b)=>Number(b.assignments.size>0)-Number(a.assignments.size>0)||a.indicator.code.localeCompare(b.indicator.code)||a.indicator.label.localeCompare(b.indicator.label));
+  },[indicators,usage]);
+  const configuredEvaluations=new Set(usage.map(item=>item.assignmentId)).size;
+  const linkedIndicators=summaries.filter(item=>item.inCatalog&&item.assignments.size>0).length;
+  async function save(){if(await onSave()){setDirty(false);setEditing(false);}}
+  function add(){setEditing(true);setDirty(true);onAdd();}
+  const totalStudentsGraded=(summary:typeof summaries[number])=>[...summary.assignments.values()].flatMap(item=>[...item.courses.values()]).reduce((sum,item)=>sum+item.gradedStudents,0);
+  const coursesWithGrades=(summary:typeof summaries[number])=>new Set([...summary.assignments.values()].flatMap(item=>[...item.courses.values()].filter(row=>row.gradedStudents>0).map(row=>row.courseId))).size;
+  return <>
+    {editing?<section className="panel sequence-workspace"><div className="table-toolbar"><div><h2>Configurar indicadores</h2><p className="muted">Confirma el código, el indicador y su competencia. Los puntos se asignan después, cuando lo vincules a una actividad.</p></div><div className="toolbar">{(indicators.length>0||usage.length>0)&&<button type="button" className="button secondary" disabled={dirty} title={dirty?'Guarda los cambios antes de consultar las estadísticas.':undefined} onClick={()=>setEditing(false)}>Ver estadísticas</button>}<button type="button" className="button secondary" onClick={add}><Plus size={15}/> Añadir indicador</button></div></div>
+      {dirty&&<div className="notice warning">Hay cambios del catálogo sin guardar; las estadísticas muestran los datos guardados anteriormente.</div>}
+      {indicators.map((indicator,index)=><div className="sequence-indicator-row" key={indicator.id}><label><small>Código</small><input maxLength={80} value={indicator.code} onChange={event=>{setDirty(true);onUpdate(indicator.id,{code:event.target.value});}} placeholder={`I${index+1}`}/></label><label><small>Indicador de logro</small><input maxLength={500} value={indicator.label} onChange={event=>{setDirty(true);onUpdate(indicator.id,{label:event.target.value});}} placeholder="Describe el logro observable"/></label><label><small>Competencia</small><select value={indicator.competency??''} onChange={event=>{setDirty(true);onUpdate(indicator.id,{competency:event.target.value?event.target.value as CompetencyKey:null});}}><option value="">Sin asignar</option>{COMPETENCY_GROUPS.map(item=><option key={item.key} value={item.key}>{item.label}</option>)}</select></label><button type="button" className="icon-button" aria-label={`Quitar indicador ${indicator.code||index+1}`} onClick={()=>{setDirty(true);onRemove(indicator.id);}}><Trash2 size={15}/></button></div>)}
+      {!indicators.length&&<div className="empty-state compact"><h3>No hay indicadores cargados</h3><p>Al importar una secuencia se guardarán aquí cuando el documento los incluya. También puedes agregarlos manualmente.</p></div>}
+      {indicators.some(item=>!item.competency)&&<div className="notice warning" role="status">Hay indicadores pendientes de asociar con una competencia. Completa esa relación antes de usarlos para calificar.</div>}
+      {error&&<div className="notice warning" role="alert">{error}</div>}{notice&&<div className="notice success" role="status">{notice}</div>}
+      <div className="sequence-save-actions"><button type="button" className="button primary" disabled={busy} onClick={()=>void save()}>{busy?<LoaderCircle className="spin" size={15}/>:<Save size={15}/>} Guardar catálogo</button></div>
+    </section>:<>
+      <section className="metrics compact indicator-usage-metrics"><div className="metric"><span>Indicadores confirmados</span><strong>{indicators.length}</strong></div><div className="metric"><span>Asignados a evaluaciones</span><strong>{linkedIndicators}</strong></div><div className="metric"><span>Evaluaciones configuradas</span><strong>{configuredEvaluations}</strong></div><div className="metric"><span>Sin asignación</span><strong>{Math.max(0,indicators.length-linkedIndicators)}</strong></div></section>
+      {dirty&&<div className="notice warning">Hay cambios del catálogo sin guardar; esta vista conserva las estadísticas de las asignaciones guardadas.</div>}
+      <section className="panel indicator-usage-panel"><div className="table-toolbar"><div><h2>Uso por indicador</h2><p className="muted">El conteo distingue las actividades configuradas de las calificaciones realmente guardadas en cada curso.</p></div><button type="button" className="button secondary" onClick={()=>{setEditing(true);setDirty(false);}}><Settings2 size={15}/> Administrar indicadores</button></div>
+        {usageError&&<div className="notice warning" role="alert">No se pudieron cargar las estadísticas: {usageError}</div>}
+        {usageLoading?<div className="loading-state"><LoaderCircle className="spin"/> Cargando uso guardado…</div>:<div className="indicator-usage-list">{summaries.map(summary=>{const courseCount=coursesWithGrades(summary);const gradedCount=totalStudentsGraded(summary);const assignments=[...summary.assignments.values()].sort((a,b)=>a.period.localeCompare(b.period)||a.title.localeCompare(b.title));return <article className="indicator-usage-card" key={summary.indicator.id}><div className="indicator-usage-card-heading"><div><div className="toolbar"><span className="pill">{summary.indicator.code||'Sin código'}</span>{!summary.inCatalog&&<span className="pill provisional">Definido dentro de una actividad</span>}</div><h3>{summary.indicator.label}</h3><p>{COMPETENCY_GROUPS.find(group=>group.key===summary.indicator.competency)?.label??'Competencia pendiente'}</p></div><div className="indicator-usage-counts"><span><strong>{summary.assignments.size}</strong> evaluaciones</span><span><strong>{courseCount}</strong> cursos con notas</span><span><strong>{gradedCount}</strong> estudiantes calificados</span></div></div>
+          {assignments.length?<details className="indicator-assignment-details"><summary>Ver puntos asignados y captura por curso</summary><div className="table-wrap"><table className="data-table"><thead><tr><th>Período</th><th>Actividad</th><th>Puntos</th><th>Captura de notas</th></tr></thead><tbody>{assignments.map(item=><tr key={item.key}><td>{item.period}</td><td><strong>{item.title}</strong></td><td>{item.points} / {item.maxPoints}</td><td>{[...item.courses.values()].sort((a,b)=>a.courseCode.localeCompare(b.courseCode)).map(row=><small key={row.courseId}>{row.courseCode}: {row.gradedStudents}/{row.studentsInCourse} calificados · {row.studentsWithData} con algún dato</small>)}</td></tr>)}</tbody></table></div></details>:<p className="muted indicator-unused">Todavía no está asignado a una evaluación.</p>}
+        </article>;})}{summaries.length===0&&<div className="empty-state"><h3>El catálogo está vacío</h3><p>Agrega los indicadores de la secuencia para que luego puedan asignarse a las actividades y aparezcan aquí sus resultados de uso.</p><button type="button" className="button primary" onClick={add}><Plus size={15}/> Añadir indicador</button></div>}</div>}
+      </section>
+    </>}
+  </>;
 }
 
 function AssessmentSourcePreview({instrument}:{instrument:SourceAssessmentInstrument}){
