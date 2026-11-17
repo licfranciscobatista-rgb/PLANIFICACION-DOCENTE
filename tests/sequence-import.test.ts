@@ -13,6 +13,32 @@ test('el importador de texto reconoce encabezados numerados en orden', () => {
   ]);
 });
 
+test('una actividad de secuencia conserva su lista original y puede evaluarse otra vez en otro período',async()=>{
+ const db=await createTestDatabase();
+ try{
+  const service=new RegistroService(db,{demo:true,today:()=> '2026-11-15'});
+  const owner='sequence-repeat-evaluation';
+  const bootstrap=await service.bootstrap(owner);
+  const course=bootstrap.courses.find(item=>item.code==='5A')!;
+  const sequenceActivity={id:'vector-sum',code:'2.2',theme:'Suma de vectores',title:'Suma de vectores: método extremo–origen',lessonType:null,description:'Suma gráfica de vectores.',evidence:'',indicatorIds:['vector-indicator'],period:'P2',plannedPoints:5,plannedPercent:null,evaluationPurpose:'formativa' as const};
+  const sequence={source:'uploaded' as const,sourceName:'secuencia.pdf',sourceText:'',reviewed:true,activePlanningPeriod:'P2' as const,periodAssignments:[{activityId:sequenceActivity.id,period:'P1' as const},{activityId:sequenceActivity.id,period:'P2' as const}],activities:[sequenceActivity],indicators:[{id:'vector-indicator',code:'I2',label:'Resuelve operaciones con vectores.',competency:'logico_matematica' as const}]};
+  await service.saveCurriculumSequence(owner,sequence);
+  const saved=(await service.bootstrap(owner)).curriculumSequence!;
+  assert.deepEqual(saved.periodAssignments,sequence.periodAssignments,'la lista de varios períodos persiste en la secuencia');
+  await service.updatePlan(owner,{...bootstrap.plan,period:'P1',startDate:'2026-10-20',endDate:'2026-11-01',sequence:undefined});
+  await service.activatePlan(owner,'P1');
+  const first=(await service.createSharedActivity(owner,{courseIds:[course.id],activity:{category:'sequence',title:sequenceActivity.title,date:'2026-10-27',maxPoints:5,sequenceActivityId:sequenceActivity.id,requestId:'vector-evaluation-p1'}}))[0]!;
+  assert.equal(first.sequencePlannedPeriod,'P1');
+  await service.activatePlan(owner,'P2');
+  const second=(await service.createSharedActivity(owner,{courseIds:[course.id],activity:{category:'sequence',title:sequenceActivity.title,date:'2026-11-15',maxPoints:5,sequenceActivityId:sequenceActivity.id,requestId:'vector-evaluation-p2'}}))[0]!;
+  assert.equal(second.sequenceActivityId,first.sequenceActivityId,'la segunda evaluación conserva el vínculo con la misma actividad de secuencia');
+  assert.equal(second.period,'P2');
+  assert.equal(second.sequencePlannedPeriod,'P2','cada repetición conserva el período donde se agregó sin mover la evaluación anterior');
+  assert.equal((await service.bootstrap(owner)).activities.filter(item=>item.sequenceActivityId===sequenceActivity.id).length,2);
+  await assert.rejects(service.saveCurriculumSequence(owner,{...sequence,periodAssignments:[...sequence.periodAssignments,{activityId:sequenceActivity.id,period:'P2'}]}),/repetida en la misma lista/);
+ }finally{await db.close();}
+});
+
 test('las competencias explícitas del anexo proponen indicadores únicos y dejan sin asignar I6 o relaciones ambiguas', () => {
   const indicators = [
     { id: 'i1', competency: 'comunicativa' as const },
