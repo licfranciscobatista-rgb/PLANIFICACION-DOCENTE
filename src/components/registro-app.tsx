@@ -63,7 +63,7 @@ export default function RegistroApp({demo,initialView='home'}:{demo:boolean;init
      {view==='attendance'&&course&&<AttendancePanel course={course} today={data.today} date={registerDate||data.today} onDateChange={setRegisterDate} block={registerBlock} onBlockChange={setRegisterBlock}/>}
      {view==='attendance-summary'&&course&&<AttendanceSummaryPanel course={course} section="month" demo={demo}/>}
      {view==='attendance-weekly'&&course&&<AttendanceSummaryPanel course={course} section="week" demo={demo}/>}
-     {view==='grades'&&course&&<GradesPanel course={course} activities={data.activities.filter(a=>a.period===data.plan.period)} selectedActivityId={gradeActivityId} onNew={openActivities}/>}
+     {view==='grades'&&course&&<GradesPanel course={course} activities={data.activities.filter(a=>a.period===data.plan.period)} selectedActivityId={gradeActivityId} onOpenActivities={openActivities}/>}
    {view==='activities'&&<ActivityWorkspace courses={data.courses} activities={data.activities} plan={data.plan} plans={data.plans} curriculumSequence={data.curriculumSequence} period={activityPeriod} section={activitySection} today={data.today} onPeriod={selectActivityPeriod} onSection={setActivitySection} onConfigure={configureActivityPeriod} onChange={boot.reload} onGrade={openActivityGrades}/>}
      {view==='students'&&course&&<StudentPanel course={course} onChange={boot.reload} onOpenAttendance={()=>go('attendance',course.id)}/>}
      {view==='reports'&&course&&<ReportPanel course={course} plan={data.plan}/>}
