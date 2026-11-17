@@ -37,7 +37,15 @@ function StudentReportPanel({ course, plan }: { course: Course; plan: Evaluation
   const params = useMemo(() => ({ courseId: course.id, studentId }), [course.id, studentId]);
   const { data, error, loading, reload } = useRemote<StudentReport>("report", params);
   const report = data?.student.id === studentId && data.course.id === course.id ? data : null;
-  const behavior = report?.timeline.map((entry) => ({ ...entry, label: `${formatDate(entry.date)} · B${entry.block}`, behavior: entry.sessionStatus === "impartida" ? entry.behavior : null })) ?? [];
+  const dailyRatings = report?.timeline.map((entry) => ({
+    ...entry,
+    label: `${formatDate(entry.date)} · B${entry.block}`,
+    participation: entry.sessionStatus === "impartida" ? entry.participation : null,
+    behavior: entry.sessionStatus === "impartida" ? entry.behavior : null,
+    discipline: entry.sessionStatus === "impartida" ? entry.discipline : null,
+  })) ?? [];
+  const dailyCategory = report?.categories.find(category => category.key === "participation");
+  const dailyMaximum = plan.categories.find(category => category.key === "participation")?.dailyMax ?? 10;
   const categories = report?.categories.map(category => ({ name: category.label, weight: category.weight, points: category.points })) ?? [];
   const labels = new Map([...plan.categories.map(category => [category.key, category.label] as const), ["extra", "Puntos extra"] as const]);
   const baseScore = report?.total !== null && report ? report.total - report.bonusPoints : report?.categories.some(category => category.points !== null) ? report.categories.reduce((sum, category) => sum + (category.points ?? 0), 0) : null;
@@ -79,17 +87,30 @@ function StudentReportPanel({ course, plan }: { course: Course; plan: Evaluation
         {[{ label: "Presentes · P", value: report.attendance.present }, { label: "Ausencias · A", value: report.attendance.absent }, { label: "Tardanzas · T", value: report.attendance.late }, { label: "Excusas · E", value: report.attendance.excused }].map(item => <div key={item.label} className="metric"><span>{item.label}</span><strong>{item.value}</strong></div>)}
       </div>
       {report.notices.length > 0 && <div className="notice warning report-calculation-notice" role="status"><strong>Observaciones del cálculo</strong><ul>{report.notices.map((notice, index) => <li key={`${index}-${notice}`}>{notice}</li>)}</ul></div>}
-      <section className="panel" aria-labelledby="behavior-chart-title">
-        <h3 id="behavior-chart-title">Comportamiento por sesión</h3><p className="muted">Escala de 0 a 10. Los espacios sin valoración se muestran como pendientes.</p>
-        {behavior.some(entry => entry.behavior !== null) ? <div className="chart-box" role="img" aria-label="Evolución del comportamiento, en escala de cero a diez">
+      <section className="panel" aria-labelledby="daily-ratings-title">
+        <h3 id="daily-ratings-title">Participación, comportamiento y disciplina</h3>
+        <p className="muted">Esta categoría aporta hasta {formatNumber(dailyCategory?.weight ?? 0)} puntos al período. Cada porcentaje distribuye ese máximo; el aporte mostrado suma las valoraciones diarias de clases impartidas.</p>
+        {dailyCategory?.dailyBreakdown && <div className="daily-earned-grid" aria-label="Aporte de cada dimensión a los 15 puntos del período">
+          {([ ["participation", "Participación"], ["behavior", "Comportamiento"], ["discipline", "Disciplina"] ] as const).map(([key, label]) => {
+            const item = dailyCategory.dailyBreakdown![key];
+            const allocated = dailyCategory.weight * item.percentage / 100;
+            return <div className="daily-earned-card" key={key}><span>{label} · {item.percentage}%</span><strong>{formatNumber(item.points)} / {formatNumber(allocated)} pts</strong><small>{formatNumber(item.rawEarned)} / {formatNumber(item.rawPossible)} bruto</small></div>;
+          })}
+          <div className="daily-earned-card total"><span>Total de la categoría</span><strong>{formatNumber(dailyCategory.points)} / {formatNumber(dailyCategory.weight)} pts</strong><small>La suma de las tres partes</small></div>
+        </div>}
+        <p className="muted">Escala de 0 a {formatNumber(dailyMaximum)} por clase. Una ausencia suma cero en participación; comportamiento y disciplina quedan sin valoración. Las clases no impartidas se excluyen.</p>
+        {dailyRatings.some(entry => entry.participation !== null || entry.behavior !== null || entry.discipline !== null) ? <div className="chart-box" role="img" aria-label="Evolución diaria de participación, comportamiento y disciplina">
           <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={behavior} accessibilityLayer margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" minTickGap={35} tick={{ fontSize: 11 }} /><YAxis domain={[0, 10]} allowDecimals={false} width={35} /><Tooltip /><Line type="linear" dataKey="behavior" name="Comportamiento / 10" stroke="#17776d" strokeWidth={3} dot={{ r: 4 }} connectNulls={false} />
+            <LineChart data={dailyRatings} accessibilityLayer margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" minTickGap={35} tick={{ fontSize: 11 }} /><YAxis domain={[0, dailyMaximum]} allowDecimals={false} width={35} /><Tooltip /><Legend />
+              <Line type="linear" dataKey="participation" name={`Participación / ${dailyMaximum}`} stroke="#3977b7" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
+              <Line type="linear" dataKey="behavior" name={`Comportamiento / ${dailyMaximum}`} stroke="#17776d" strokeWidth={3} dot={{ r: 4 }} connectNulls={false} />
+              <Line type="linear" dataKey="discipline" name={`Disciplina / ${dailyMaximum}`} stroke="#a06b1e" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
             </LineChart>
           </ResponsiveContainer>
-        </div> : <div className="empty-state">Todavía no hay valoraciones de comportamiento en sesiones impartidas.</div>}
-        <div className="table-wrap"><table className="data-table"><caption>Detalle de comportamiento y asistencia</caption><thead><tr><th>Fecha</th><th>Bloque</th><th>Clase</th><th>Asistencia</th><th>Comportamiento / 10</th></tr></thead><tbody>
-          {report.timeline.length === 0 ? <tr><td colSpan={5}>Sin sesiones registradas.</td></tr> : report.timeline.map(entry => <tr key={`${entry.date}-${entry.block}`}><td>{formatDate(entry.date)}</td><td>{entry.block}</td><td>{entry.sessionStatus === "impartida" ? "Impartida" : entry.sessionStatus === "programada" ? "Programada" : entry.sessionStatus === "no_programada" ? "No programada" : "No impartida"}</td><td>{entry.status ?? "Pendiente"}</td><td>{formatNumber(entry.behavior)}</td></tr>)}
+        </div> : <div className="empty-state">Todavía no hay valoraciones diarias en sesiones impartidas.</div>}
+        <div className="table-wrap"><table className="data-table"><caption>Detalle diario que alimenta los puntos del período</caption><thead><tr><th>Fecha</th><th>Bloque</th><th>Clase</th><th>Asistencia</th><th>Participación / {dailyMaximum}</th><th>Comportamiento / {dailyMaximum}</th><th>Disciplina / {dailyMaximum}</th></tr></thead><tbody>
+          {report.timeline.length === 0 ? <tr><td colSpan={7}>Sin sesiones registradas.</td></tr> : report.timeline.map(entry => <tr key={`${entry.date}-${entry.block}`}><td>{formatDate(entry.date)}</td><td>{entry.block}</td><td>{entry.sessionStatus === "impartida" ? "Impartida" : entry.sessionStatus === "programada" ? "Programada" : entry.sessionStatus === "no_programada" ? "No programada" : "No impartida"}</td><td>{entry.status ?? "Pendiente"}</td><td>{entry.sessionStatus === "impartida" ? formatNumber(entry.participation) : "—"}</td><td>{formatNumber(entry.behavior)}</td><td>{formatNumber(entry.discipline)}</td></tr>)}
         </tbody></table></div>
       </section>
       {!report.directEvaluation&&<section className="panel" aria-labelledby="category-chart-title">
@@ -102,7 +123,7 @@ function StudentReportPanel({ course, plan }: { course: Course; plan: Evaluation
           </ResponsiveContainer>
         </div>
         <div className="table-wrap"><table className="data-table"><caption>Cálculo de cada categoría</caption><thead><tr><th>Categoría</th><th>Obtenidos / posibles registrados</th><th>Valoraciones</th><th>Pendientes</th><th>Aporte / peso</th></tr></thead><tbody>
-          {report.categories.map(category => <tr key={category.key}><td>{category.label}</td><td>{formatNumber(category.rawEarned)} / {formatNumber(category.rawPossible)}</td><td>{category.graded}</td><td>{category.pending}</td><td>{formatNumber(category.points)} / {formatNumber(category.weight)}{category.provisional && <span className="pill"> Provisional</span>}</td></tr>)}
+          {report.categories.map(category => <tr key={category.key}><td>{category.label}</td><td>{formatNumber(category.rawEarned)} / {formatNumber(category.rawPossible)}{category.dailyBreakdown&&Object.entries(category.dailyBreakdown).map(([key,item])=><small className="cell-description" key={key}>{key==='participation'?'Participación':key==='behavior'?'Comportamiento':'Disciplina'}: {formatNumber(item.rawEarned)} / {formatNumber(item.rawPossible)} bruto</small>)}</td><td>{category.graded}</td><td>{category.pending}</td><td>{formatNumber(category.points)} / {formatNumber(category.weight)}{category.provisional && <span className="pill"> Provisional</span>}{category.dailyBreakdown&&Object.entries(category.dailyBreakdown).map(([key,item])=><small className="cell-description" key={key}>{key==='participation'?'Participación':key==='behavior'?'Comportamiento':'Disciplina'} {item.percentage}%: {formatNumber(item.points)} / {formatNumber(category.weight*item.percentage/100)} pts</small>)}</td></tr>)}
         </tbody></table></div>
       </section>}
       <section className="panel" aria-labelledby="activity-report-title"><h3 id="activity-report-title">Actividades y calificaciones</h3>

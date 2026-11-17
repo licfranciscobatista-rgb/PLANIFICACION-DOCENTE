@@ -7,7 +7,7 @@ import { PDFDocument } from 'pdf-lib';
 import { createTestDatabase } from '../src/lib/db';
 import { buildAttendanceRegisterPdf } from '../src/lib/attendance-pdf';
 import { RegistroService } from '../src/lib/service';
-import { AppError, type AttendanceInput, type Course, type RubricCriterion, type SequencePlan } from '../src/lib/model';
+import { AppError, type AttendanceInput, type DailyAssessmentInput, type Course, type RubricCriterion, type SequencePlan } from '../src/lib/model';
 import { closeTo, expectedRecord, expectedStudent, teachingDates } from './oracle';
 
 const root = path.resolve('.local');
@@ -562,6 +562,113 @@ test('conducta diaria 3 de 10 produce un 30% observado y conserva la escala expl
   assert.equal(category.weight, 15);
 });
 
+test('la distribución interna de los 15 puntos debe sumar 100% y dar más porcentaje al comportamiento que a disciplina', async () => {
+  const { actor } = await caseContext('daily-weights-validation');
+  const initial = await service.bootstrap(actor);
+  const setWeights = (participation: number, behavior: number, discipline: number) => ({
+    ...initial.plan,
+    categories: initial.plan.categories.map(category => category.key === 'participation'
+      ? { ...category, dailyWeights: { participation, behavior, discipline } }
+      : category),
+  });
+  await assert.rejects(service.updatePlan(actor, setWeights(50, 30, 10)), isError(400), 'no debe aceptar porcentajes que sumen 90%');
+  await assert.rejects(service.updatePlan(actor, setWeights(40, 30, 30)), isError(400), 'comportamiento debe superar a disciplina');
+  const confirmed = await service.updatePlan(actor, { ...setWeights(40, 40, 20), status: 'confirmed' });
+  assert.equal(confirmed.categories.find(category => category.key === 'participation')?.weight, 15);
+  assert.deepEqual(confirmed.categories.find(category => category.key === 'participation')?.dailyWeights, {
+    participation: 40, behavior: 40, discipline: 20,
+  });
+});
+
+test('una ausencia resta participación, no evalúa comportamiento ni disciplina, y omite la clase no impartida', async () => {
+  const { actor, course } = await caseContext('daily-weights-absence');
+  const student = course.students[0]!;
+  const initial = await service.bootstrap(actor);
+  await service.updatePlan(actor, {
+    ...initial.plan,
+    status: 'confirmed',
+    categories: initial.plan.categories.map(category => category.key === 'participation'
+      ? { ...category, dailyWeights: { participation: 40, behavior: 40, discipline: 20 } }
+      : category),
+  });
+
+  const scheduled = (await service.registerSummary(actor, course.id)).sessions.filter(session => session.scheduled).slice(0, 3);
+  assert.equal(scheduled.length, 3);
+  for (const [index, session] of scheduled.slice(0, 2).entries()) {
+    const receipt = await service.saveAttendance(actor, attendanceInput(course, {
+      date: session.date,
+      block: session.block,
+      rows: course.students.map(person => ({
+        studentId: person.id,
+        status: index === 1 && person.id === student.id ? 'A' : 'P',
+      })),
+    }));
+    const savedAttendance = await service.attendance(actor, course.id, session.date, session.block);
+    await service.saveDailyAssessment(actor, {
+      requestId: randomUUID(), courseId: course.id, date: session.date, block: session.block,
+      revision: receipt.revision, assessmentRevision: savedAttendance.session.assessmentRevision,
+      rows: course.students.map(person => ({
+        studentId: person.id,
+        participation: index === 1 && person.id === student.id ? null : person.id === student.id ? 10 : 7,
+        behavior: index === 1 && person.id === student.id ? null : person.id === student.id ? 8 : 7,
+        discipline: index === 1 && person.id === student.id ? null : person.id === student.id ? 6 : 5,
+      })),
+    });
+  }
+  const notTaught = scheduled[2]!;
+  await service.saveAttendance(actor, attendanceInput(course, {
+    date: notTaught.date, block: notTaught.block,
+    rows: course.students.map(person => ({ studentId: person.id, status: null })),
+  }));
+
+  const report = await service.report(actor, course.id, student.id, 'P2');
+  const category = report.categories.find(item => item.key === 'participation')!;
+  assert.equal(category.points, 9.6);
+  assert.equal(category.rawEarned, 24);
+  assert.equal(category.rawPossible, 40);
+  assert.equal(category.pending, 0);
+  assert.deepEqual(category.dailyBreakdown, {
+    participation: { percentage: 40, rawEarned: 10, rawPossible: 20, points: 3 },
+    behavior: { percentage: 40, rawEarned: 8, rawPossible: 10, points: 4.8 },
+    discipline: { percentage: 20, rawEarned: 6, rawPossible: 10, points: 1.8 },
+  });
+  const absentBlock = report.timeline.find(entry => entry.date === scheduled[1]!.date && entry.block === scheduled[1]!.block);
+  assert.equal(absentBlock?.participation, 0);
+  assert.equal(absentBlock?.behavior, null);
+  assert.equal(absentBlock?.discipline, null);
+  assert.equal(report.timeline.find(entry => entry.date === notTaught.date && entry.block === notTaught.block)?.sessionStatus, 'no_impartida');
+});
+
+test('la valoración del bloque se guarda aparte y nunca modifica las marcas de asistencia', async () => {
+  const { actor, course } = await caseContext('daily-assessment-independent');
+  const attendance = attendanceInput(course, { rows: course.students.map((student, index) => ({
+    studentId: student.id,
+    status: index === 0 ? 'P' : index === 1 ? 'A' : 'T',
+  })) });
+  const attendanceReceipt = await service.saveAttendance(actor, attendance);
+  const before = await service.attendance(actor, course.id, attendance.date, attendance.block);
+  const assessment: DailyAssessmentInput = {
+    requestId: randomUUID(), courseId: course.id, date: attendance.date, block: attendance.block,
+    revision: attendanceReceipt.revision, assessmentRevision: before.session.assessmentRevision,
+    rows: course.students.map((student, index) => ({
+      studentId: student.id, participation: index < 2 ? 8 : 6, behavior: index < 2 ? 9 : 7, discipline: index < 2 ? 5 : 4,
+      comment: `Nota de valoración ${index + 1}`,
+    })),
+  };
+  const assessmentReceipt = await service.saveDailyAssessment(actor, assessment);
+  const after = await service.attendance(actor, course.id, attendance.date, attendance.block);
+  assert.equal(after.session.revision, attendanceReceipt.revision);
+  assert.equal(after.session.assessmentRevision, assessmentReceipt.revision);
+  assert.deepEqual(after.rows.map(row => row.status), before.rows.map(row => row.status));
+  assert.equal(after.rows[0]?.participation, 8);
+  assert.equal(after.rows[0]?.behavior, 9);
+  assert.equal(after.rows[0]?.discipline, 5);
+  assert.equal(after.rows[1]?.participation, null, 'una ausencia no debe recibir valoración diaria');
+  assert.equal(after.rows[1]?.behavior, null, 'una ausencia no debe recibir valoración diaria');
+  assert.equal(after.rows[1]?.discipline, null, 'una ausencia no debe recibir valoración diaria');
+  assert.equal(after.rows[0]?.comment, 'Nota de valoración 1');
+});
+
 test('ausencias y excusas no producen nota de conducta ni aumentan su máximo posible', async () => {
   const { actor, course } = await caseContext('behavior-excludes-absence');
   const first = course.students[0], second = course.students[1];
@@ -694,7 +801,13 @@ test('P2 calcula la rúbrica de 85 y suma las dos partes de libretas sobre 40', 
   const { actor, course } = await caseContext('p2-grade-formula');
   const student = course.students[0]!;
   const initial = await service.bootstrap(actor);
-  const confirmed = { ...initial.plan, status: 'confirmed' as const };
+  const confirmed = {
+    ...initial.plan,
+    status: 'confirmed' as const,
+    categories: initial.plan.categories.map(category => category.key === 'participation'
+      ? { ...category, dailyWeights: { participation: 50, behavior: 30, discipline: 20 } }
+      : category),
+  };
   await service.updatePlan(actor, confirmed);
 
   const scheduled = (await service.registerSummary(actor, course.id)).sessions.filter(session => session.scheduled).slice(0, 2);
@@ -702,8 +815,19 @@ test('P2 calcula la rúbrica de 85 y suma las dos partes de libretas sobre 40', 
   for (const [index, session] of scheduled.entries()) {
     await service.saveAttendance(actor, attendanceInput(course, {
       date: session.date, block: session.block,
-      rows: course.students.map(person => ({ studentId: person.id, status: 'P', behavior: person.id === student.id ? (index === 0 ? 8 : 10) : 7, comment: '' })),
+      rows: course.students.map(person => ({ studentId: person.id, status: 'P', comment: '' })),
     }));
+    const attendance = await service.attendance(actor, course.id, session.date, session.block);
+    await service.saveDailyAssessment(actor, {
+      requestId: randomUUID(), courseId: course.id, date: session.date, block: session.block,
+      revision: attendance.session.revision, assessmentRevision: attendance.session.assessmentRevision,
+      rows: course.students.map(person => ({
+        studentId: person.id,
+        participation: person.id === student.id ? (index === 0 ? 9 : 10) : 8,
+        behavior: person.id === student.id ? (index === 0 ? 8 : 10) : 7,
+        discipline: person.id === student.id ? (index === 0 ? 6 : 8) : 6,
+      })),
+    });
     const notebook = await service.createActivity(actor, {
       requestId: randomUUID(), courseId: course.id, category: 'notebook', title: `Libreta P2 QA ${index + 1}`,
       date: session.date, block: session.block, maxPoints: 2,
@@ -737,6 +861,7 @@ test('P2 calcula la rúbrica de 85 y suma las dos partes de libretas sobre 40', 
     rows: [{ studentId: student.id, score: null, criterionLevels: Object.fromEntries(rubric.map(criterion => [criterion.id, 3])) }],
   });
 
+  simulatedToday = '2027-01-21';
   const report = await service.report(actor, course.id, student.id, 'P2');
   const byKey = new Map(report.categories.map(category => [category.key, category]));
   assert.deepEqual(report.categories.map(category => [category.key, category.weight]), [
@@ -749,15 +874,21 @@ test('P2 calcula la rúbrica de 85 y suma las dos partes de libretas sobre 40', 
   assert.equal(byKey.get('notebook')?.rawPossible, 4);
   assert.equal(byKey.get('notebook')?.rawEarned, 3.5);
   assert.equal(byKey.get('notebook')?.points, 17.5);
-  assert.equal(byKey.get('participation')?.rawEarned, 18);
-  assert.equal(byKey.get('participation')?.points, 13.5);
+  assert.equal(byKey.get('participation')?.rawEarned, 51);
+  assert.equal(byKey.get('participation')?.rawPossible, 60);
+  assert.equal(byKey.get('participation')?.points, 13.28);
+  assert.deepEqual(byKey.get('participation')?.dailyBreakdown, {
+    participation: { percentage: 50, rawEarned: 19, rawPossible: 20, points: 7.13 },
+    behavior: { percentage: 30, rawEarned: 18, rawPossible: 20, points: 4.05 },
+    discipline: { percentage: 20, rawEarned: 14, rawPossible: 20, points: 2.1 },
+  });
   assert.equal(byKey.get('homework')?.points, 10);
-  assert.equal(report.total, 96);
+  assert.equal(report.total, 95.78);
 
   const ledger = await service.teacherLedger(actor, 'P2');
   const row = ledger.rows.find(item => item.student.id === student.id)!;
   assert.equal(row.finalized, true);
-  assert.equal(row.weightedTotal, 96);
+  assert.equal(row.weightedTotal, 95.78);
   assert.equal(row.categories.find(category => category.key === 'sequence')?.group, 'Libretas y tareas');
   assert.equal(row.categories.find(category => category.key === 'notebook')?.group, 'Libretas y tareas');
 });
@@ -854,7 +985,8 @@ test('una actividad común se prepara una vez, se crea para los tres cursos y se
   assert.equal(firstRow.scores.find(item=>item.key==='behavior:period')?.points,4);
   assert.equal(firstRow.rawTotal,7);
   const personal = ledger.groups.find(group=>group.key==='desarrollo_personal')!;
-  assert.ok(personal.columns.some(column=>column.label==='Disciplina / comportamiento'));
+  assert.ok(personal.columns.some(column=>column.label==='Comportamiento diario'));
+  assert.ok(personal.columns.some(column=>column.label==='Disciplina diaria'));
   const communication = ledger.groups.find(group=>group.key==='comunicativa')!;
   assert.ok(communication.columns.some(column=>column.label==='Participación común QA'));
   assert.deepEqual(new Set(participationColumn.courseIds),new Set(ownCourses.map(course=>course.id)));

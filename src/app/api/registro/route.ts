@@ -3,7 +3,7 @@ import { AccessError, demoMode, requireOwner } from '@/lib/auth';
 import { getDatabase } from '@/lib/db';
 import { RegistroService } from '@/lib/service';
 import { buildAttendanceRegisterPdf } from '@/lib/attendance-pdf';
-import { AppError, ActivityInput, AttendanceInput, GradesInput, RosterRow, SharedActivityInput } from '@/lib/model';
+import { AppError, ActivityInput, AttendanceInput, DailyAssessmentInput, GradesInput, RosterRow, SharedActivityInput } from '@/lib/model';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,6 +62,7 @@ export async function POST(req:NextRequest) {
     const service=new RegistroService(await getDatabase(),serviceOptions()); let data:unknown;
     switch(body.action) {
       case 'attendance': data=await service.saveAttendance(owner,body.input as AttendanceInput);break;
+      case 'daily-assessment': data=await service.saveDailyAssessment(owner,body.input as DailyAssessmentInput);break;
       case 'grades': data=await service.saveGrades(owner,body.input as GradesInput);break;
       case 'activity': data=await service.createActivity(owner,body.input as ActivityInput);break;
       case 'shared-activity': data=await service.createSharedActivity(owner,body.input as SharedActivityInput);break;

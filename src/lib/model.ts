@@ -24,7 +24,8 @@ export interface PeriodSheetPlan { period:string; revision:number; enabled:boole
 export interface PeriodSheetResult { columns:PeriodSheetColumn[]; scores:Record<string,number|null>; plannedPoints:number; pending:number; accumulated:number|null; total:number|null }
 export interface PeriodSheetView { plan:PeriodSheetPlan; courseId:string; rows:{student:Student; result:PeriodSheetResult}[] }
 export interface Course { id: string; code: string; name: string; students: Student[] }
-export interface Category { key: CategoryKey; label: string; group?: string; weight: number; expectedRaw: number | null; dailyMax: number | null; targetSessions: number | null; competency: CompetencyKey | null }
+export interface DailyWeights { participation: number; behavior: number; discipline: number }
+export interface Category { key: CategoryKey; label: string; group?: string; weight: number; expectedRaw: number | null; dailyMax: number | null; targetSessions: number | null; competency: CompetencyKey | null; dailyWeights?: DailyWeights | null }
 export interface SequenceIndicator { id: string; code: string; label: string; competency: CompetencyKey | null }
 export interface SourceAssessmentInstrument { annexNumber: number; title: string; kind: "checklist" | "rubric" | "scale" | "exam_guide"; criteria: string[]; levels: RubricLevel[]; maxPoints: number | null; scoringNote: string; scored: boolean; relatedIndicatorText?: string; relatedCompetencyText?: string }
 export interface SequenceFinalAssessment { title: string; period: string; internalMaxPoints: number | null; periodPoints: number | null; instrument: SourceAssessmentInstrument }
@@ -32,8 +33,8 @@ export interface SequenceActivity { id: string; code: string; theme: string; tit
 export interface SequencePeriodAssignment { activityId: string; period: "P1" | "P2" | "P3" | "P4" }
 export interface SequencePlan { source: "manual" | "uploaded"; sourceName: string; sourceText: string; reviewed: boolean; planningMode?: "sequence" | "manual"; activePlanningPeriod?: "P1" | "P2" | "P3" | "P4" | null; periodAssignments?: SequencePeriodAssignment[]; activities: SequenceActivity[]; indicators: SequenceIndicator[]; finalAssessment?: SequenceFinalAssessment }
 export interface EvaluationPlan { period: string; startDate: string; endDate: string; status: "provisional" | "confirmed"; categories: Category[]; note: string; sequence?: SequencePlan }
-export interface AttendanceRow { studentId: string; number: number; name: string; status: AttendanceMark; behavior: number | null; comment: string }
-export interface ClassSession { id: string | null; courseId: string; date: string; block: number; lessonType: LessonType; topic: string; notes: string; revision: number; scheduled: boolean; calendarThrough: string; status: SessionStatus }
+export interface AttendanceRow { studentId: string; number: number; name: string; status: AttendanceMark; behavior: number | null; discipline: number | null; participation: number | null; participationMax: number | null; dailyAssessmentRequired: boolean; comment: string }
+export interface ClassSession { id: string | null; courseId: string; date: string; block: number; lessonType: LessonType; topic: string; notes: string; revision: number; assessmentRevision: number; scheduled: boolean; calendarThrough: string; status: SessionStatus }
 export interface AttendanceView { session: ClassSession; rows: AttendanceRow[] }
 export interface CourseRegisterSummary {
  course: Pick<Course,"id"|"code"|"name">;
@@ -44,7 +45,8 @@ export interface CourseRegisterSummary {
  weeks: { startDate: string; endDate: string; taught: number; notTaught: number; slots: { date: string; block: number }[]; rows: { student: Student; marks: AttendanceMark[]; present: number; absent: number; late: number; excused: number; withdrawn: number; pending: number; attended: number; totalAttendance: number; attendancePercent: number | null }[] }[];
  rows: { student: Student; present: number; absent: number; late: number; excused: number; withdrawn: number; pending: number; sessions: number; attendancePercent: number | null; behaviorAverage: number | null; behaviorPercent: number | null; behaviorCount: number; behaviorComments: number }[];
 }
-export interface AttendanceInput { requestId: string; courseId: string; date: string; block: number; revision: number; lessonType: LessonType; topic?: string; notes?: string; rows: { studentId: string; status: AttendanceMark; behavior?: number | null; comment?: string }[] }
+export interface AttendanceInput { requestId: string; courseId: string; date: string; block: number; revision: number; lessonType: LessonType; topic?: string; notes?: string; rows: { studentId: string; status: AttendanceMark; behavior?: number | null; discipline?: number | null; participation?: number | null; dailyAssessmentRequired?: boolean; comment?: string }[] }
+export interface DailyAssessmentInput { requestId: string; courseId: string; date: string; block: number; revision: number; assessmentRevision: number; rows: { studentId: string; participation: number | null; behavior: number | null; discipline: number | null; comment?: string }[] }
 export interface RubricLevel { label: string; points: number; description?: string }
 export interface RubricCriterion { id: string; label: string; levels: RubricLevel[]; competency?: CompetencyKey | null; indicator?: string; indicatorId?: string; weight?: number }
 export interface ActivityIndicatorPoint { indicatorId: string; code: string; label: string; competency: CompetencyKey; points: number }
@@ -60,16 +62,17 @@ export interface SaveReceipt { requestId: string; operationId: string; savedRows
 export interface RosterRow { externalId: string; number: number; name: string }
 export interface AuditEntry { id: string; operation: string; entityId: string; createdAt: string; before: unknown; after: unknown }
 export interface Bootstrap { courses: Course[]; activities: Activity[]; plan: EvaluationPlan; plans: EvaluationPlan[]; curriculumSequence: SequencePlan | null; criteriaCatalog: EvaluationCriterion[]; today: string; demo: boolean; demoNote?: string; ownerId: string }
-export interface CategoryReport { key: CategoryKey; label: string; group?: string; weight: number; rawEarned: number; rawPossible: number; expectedRaw: number | null; graded: number; pending: number; denominator: number | null; points: number | null; observedDenominator: number; observedPercent: number | null; planIncomplete: boolean; provisional: boolean }
+export interface DailyComponentReport { percentage: number; rawEarned: number; rawPossible: number; points: number }
+export interface CategoryReport { key: CategoryKey; label: string; group?: string; weight: number; rawEarned: number; rawPossible: number; expectedRaw: number | null; graded: number; pending: number; denominator: number | null; points: number | null; observedDenominator: number; observedPercent: number | null; planIncomplete: boolean; provisional: boolean; dailyBreakdown?: { participation: DailyComponentReport; behavior: DailyComponentReport; discipline: DailyComponentReport } }
 export interface CompetencyScore { key: CompetencyKey; label: string; points: number; possible: number; percentage: number | null; graded: number; pending: number }
 export interface CourseCompetencySummary { course: { id: string; code: string; name: string }; period: string; groups: { key: CompetencyKey; label: string }[]; rows: { student: Student; competencies: CompetencyScore[]; points: number; possible: number }[]; note: string }
 export interface TeacherLedgerColumn {
  key: string;
  label: string;
- category: ActivityCategoryKey | "behavior";
+ category: ActivityCategoryKey | "behavior" | "discipline";
  categoryLabel: string;
  competency: CompetencyKey;
- kind: "activity" | "criterion" | "behavior";
+ kind: "activity" | "criterion" | "behavior" | "discipline" | "participation";
  date: string | null;
  maxPoints: number;
  courseIds: string[];
@@ -91,6 +94,6 @@ export interface TeacherLedgerSummary {
  rows: { course: Pick<Course,"id"|"code"|"name">; student: Student; categories: CategoryReport[]; scores: TeacherLedgerScore[]; rawTotal: number; rawPossible: number; bonusPoints: number; bonusPossible: number; weightedTotal: number | null; finalized: boolean; observations: string[] }[];
  note: string;
 }
-export interface StudentReport { directEvaluation?:PeriodSheetResult; student: Student; course: { id: string; code: string; name: string }; plan: EvaluationPlan; attendance: { present: number; absent: number; late: number; excused: number; pending: number; sessions: number; percent: number | null }; categories: CategoryReport[]; competencies: CompetencyScore[]; bonusPoints: number; bonusPossible: number; total: number | null; provisionalTotal: number | null; grades: (GradeRow & { activityId: string; title: string; date: string; category: ActivityCategoryKey; maxPoints: number; included: boolean; rubric: RubricCriterion[]; indicatorPoints: ActivityIndicatorPoint[]; scoringMode: 'points'|'rubric'; competency: CompetencyKey | null; sequenceCode: string; sequenceActivityId?: string | null; sequencePlannedPeriod?: string | null; evidence: string; instrument: string; purpose: string })[]; timeline: { date: string; block: number; status: AttendanceMark; behavior: number | null; comment: string; sessionStatus: SessionStatus }[]; notices: string[] }
+export interface StudentReport { directEvaluation?: PeriodSheetResult; student: Student; course: { id: string; code: string; name: string }; plan: EvaluationPlan; attendance: { present: number; absent: number; late: number; excused: number; pending: number; sessions: number; percent: number | null }; categories: CategoryReport[]; competencies: CompetencyScore[]; bonusPoints: number; bonusPossible: number; total: number | null; provisionalTotal: number | null; grades: (GradeRow & { activityId: string; title: string; date: string; category: ActivityCategoryKey; maxPoints: number; included: boolean; rubric: RubricCriterion[]; indicatorPoints: ActivityIndicatorPoint[]; scoringMode: 'points'|'rubric'; competency: CompetencyKey | null; sequenceCode: string; sequenceActivityId?: string | null; sequencePlannedPeriod?: string | null; evidence: string; instrument: string; purpose: string })[]; timeline: { date: string; block: number; status: AttendanceMark; behavior: number | null; discipline: number | null; participation: number | null; dailyAssessmentRequired: boolean; comment: string; sessionStatus: SessionStatus }[]; notices: string[] }
 export interface ServiceOptions { demo?: boolean; seedDemoRoster?: boolean; today?: () => string; demoNote?: string }
 export class AppError extends Error { constructor(public status: number, message: string, public code = "VALIDATION") { super(message); this.name = "AppError"; } }

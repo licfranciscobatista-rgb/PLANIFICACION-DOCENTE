@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { DBAdapter } from "./db";
-import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, IndicatorUsageRecord, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan } from "./model";
+import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, DailyAssessmentInput, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, IndicatorUsageRecord, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan } from "./model";
 import { payloadHash, plan, requireDate, round, rubricMaximum, rubricScore, sessionStatus, todayInSchool } from "./engine";
 import classCalendar from "./data/class-schedule-2026-27.json";
 import { readPeriodSheet, periodSheetResult, studentPeriodSheet, savePeriodSheetPlan, savePeriodSheetGrades } from './period-sheet';
@@ -9,7 +9,8 @@ import { readPeriodSheet, periodSheetResult, studentPeriodSheet, savePeriodSheet
 type Row = Record<string, unknown>;
 const uid = z.string().uuid();
 const text = z.string().max(4000);
-const attendanceSchema = z.object({ requestId: z.string().min(1).max(200), courseId: uid, date: z.string(), block: z.number().int().min(1).max(12), revision: z.number().int().min(0), lessonType: z.enum(["teoria", "practica", "ejercicios", "repaso", "correcciones", "actividad_escolar"]), topic: text.optional(), notes: text.optional(), rows: z.array(z.object({ studentId: uid, status: z.enum(["P", "A", "T", "E", "R"]).nullable(), behavior: z.number().finite().min(0).max(10000).nullable().optional(), comment: text.optional() })).max(1000) });
+const attendanceSchema = z.object({ requestId: z.string().min(1).max(200), courseId: uid, date: z.string(), block: z.number().int().min(1).max(12), revision: z.number().int().min(0), lessonType: z.enum(["teoria", "practica", "ejercicios", "repaso", "correcciones", "actividad_escolar"]), topic: text.optional(), notes: text.optional(), rows: z.array(z.object({ studentId: uid, status: z.enum(["P", "A", "T", "E", "R"]).nullable(), behavior: z.number().finite().min(0).max(10000).nullable().optional(), discipline: z.number().finite().min(0).max(10000).nullable().optional(), participation: z.number().finite().min(0).max(10000).nullable().optional(), dailyAssessmentRequired:z.boolean().optional(), comment: text.optional() })).max(1000) });
+const dailyAssessmentSchema = z.object({ requestId:z.string().min(1).max(200),courseId:uid,date:z.string(),block:z.number().int().min(1).max(12),revision:z.number().int().min(0),assessmentRevision:z.number().int().min(0),rows:z.array(z.object({studentId:uid,participation:z.number().finite().min(0).max(10000).nullable(),behavior:z.number().finite().min(0).max(10000).nullable(),discipline:z.number().finite().min(0).max(10000).nullable(),comment:z.string().max(500).optional()})).max(1000) });
 const gradesSchema = z.object({ requestId: z.string().min(1).max(200), activityId: uid, revision: z.number().int().min(0), rows: z.array(z.object({ studentId: uid, score: z.number().finite().min(0).max(10000).nullable(), criterionLevels: z.record(z.string(), z.number().int().min(0).max(5)).nullable().optional(), comment: text.optional() })).max(1000) });
 const competencyKey = z.enum(COMPETENCY_GROUPS.map(x => x.key) as [CompetencyKey, ...CompetencyKey[]]);
 const rubricLevelSchema = z.object({ label: z.string().trim().min(1).max(100), points: z.number().finite().min(0), description: z.string().max(1000).optional() });
@@ -20,7 +21,8 @@ const activitySchema = z.object({ courseId: uid, category: z.enum(["exam", "part
 const sharedActivitySchema = z.object({ courseIds: z.array(uid).min(1).max(20), activity: activitySchema.omit({ courseId: true }).extend({ requestId: z.string().min(1).max(200) }) });
 const sequenceActivitySchema = z.object({ id:z.string().min(1).max(100), code:z.string().max(80), theme:z.string().max(250), title:z.string().trim().max(250), lessonType:z.enum(["teoria","practica","ejercicios","repaso","correcciones","actividad_escolar"]).nullable(), description:z.string().max(4000), evidence:z.string().max(1000), indicatorIds:z.array(z.string().min(1).max(100)).max(100), period:z.string().max(2).optional(), evaluationPurpose:z.enum(["diagnostica","formativa","sumativa","formativa_sumativa"]).nullable().optional(), plannedPoints:z.number().finite().nonnegative().max(10000).nullable().optional(), plannedPercent:z.number().finite().min(0).max(100).nullable().optional(), instrument:z.string().max(1000).optional(), evaluationCriteria:z.array(z.string().max(1000)).max(100).optional(), feedback:z.string().max(2000).optional(), assessmentInstrument:sourceAssessmentSchema.optional() });
 const sequenceSchema = z.object({ source: z.enum(["manual","uploaded"]), sourceName: z.string().max(250), sourceText: z.string().max(80000), reviewed: z.boolean(), planningMode:z.enum(["sequence","manual"]).optional(), activePlanningPeriod:z.enum(["P1","P2","P3","P4"]).nullable().optional(), periodAssignments:z.array(z.object({activityId:z.string().min(1).max(100),period:z.enum(["P1","P2","P3","P4"])})).max(1200).optional(), activities: z.array(sequenceActivitySchema).max(300), indicators: z.array(z.object({ id:z.string().min(1).max(100), code:z.string().max(80), label:z.string().trim().max(500), competency:competencyKey.nullable() })).max(300), finalAssessment:finalAssessmentSchema.optional() });
-const planSchema = z.object({ period: z.string(), startDate: z.string(), endDate: z.string(), status: z.enum(["provisional", "confirmed"]), note: z.string().max(4000), categories: z.array(z.object({ key: z.enum(["exam", "participation", "notebook", "sequence", "homework"]), label: z.string().trim().min(1).max(200), group: z.string().trim().min(1).max(100).optional(), weight: z.number().finite(), expectedRaw: z.number().finite().nullable(), dailyMax: z.number().finite().nullable(), targetSessions: z.number().int().nullable(), competency: competencyKey.nullable().optional() })).length(5), sequence: sequenceSchema.optional() });
+const dailyWeightsSchema=z.object({participation:z.number().finite().min(0).max(100),behavior:z.number().finite().min(0).max(100),discipline:z.number().finite().min(0).max(100)});
+const planSchema = z.object({ period: z.string(), startDate: z.string(), endDate: z.string(), status: z.enum(["provisional", "confirmed"]), note: z.string().max(4000), categories: z.array(z.object({ key: z.enum(["exam", "participation", "notebook", "sequence", "homework"]), label: z.string().trim().min(1).max(200), group: z.string().trim().min(1).max(100).optional(), weight: z.number().finite(), expectedRaw: z.number().finite().nullable(), dailyMax: z.number().finite().nullable(), targetSessions: z.number().int().nullable(), competency: competencyKey.nullable().optional(), dailyWeights:dailyWeightsSchema.nullable().optional() })).length(5), sequence: sequenceSchema.optional() });
 const criterionSchema = z.object({ id: uid.optional(), label: z.string().trim().min(1).max(200), levels: z.array(z.object({label:z.string().trim().min(1).max(100),points:z.number().finite(),description:z.string().max(1000)})).length(4) });
 const criterionImportSchema = z.object({ criteria: z.array(criterionSchema.omit({ id: true })).min(1).max(50) });
 const rosterRowSchema = z.object({ externalId: z.string().trim().min(1).max(200), number: z.number().int().positive().max(10000), name: z.string().trim().min(1).max(250) });
@@ -279,18 +281,18 @@ export class RegistroService {
   });
  }
  private async attendanceView(ownerId: string, courseId: string, date: string, block: number, tx: DBAdapter): Promise<AttendanceView> {
-  const sessions = await tx.query("SELECT id,course_id,session_date::text AS date,block,lesson_type,topic,notes,revision FROM class_sessions WHERE owner_id=$1 AND course_id=$2 AND session_date=$3 AND block=$4", [ownerId, courseId, date, block]);
+  const sessions = await tx.query("SELECT id,course_id,session_date::text AS date,block,lesson_type,topic,notes,revision,assessment_revision FROM class_sessions WHERE owner_id=$1 AND course_id=$2 AND session_date=$3 AND block=$4", [ownerId, courseId, date, block]);
   const s = sessions.rows[0]; const roster = await this.roster(ownerId, courseId, tx);
   const calendarSlot = await tx.query("SELECT 1 FROM scheduled_sessions WHERE owner_id=$1 AND course_id=$2 AND session_date=$3 AND block=$4", [ownerId,courseId,date,block]);
   const courseCode=await tx.query("SELECT code FROM courses WHERE owner_id=$1 AND id=$2",[ownerId,courseId]);
   const through=courseCode.rows[0]&&['5A','5B','5C'].includes(str(courseCode.rows[0].code))?{rows:[{date:classCalendar.through}]}:await tx.query("SELECT max(session_date)::text AS date FROM scheduled_sessions WHERE owner_id=$1 AND course_id=$2",[ownerId,courseId]);
-  const saved = s ? (await tx.query("SELECT student_id,status,behavior,comment FROM attendance WHERE owner_id=$1 AND session_id=$2", [ownerId, s.id])).rows : [];
+  const saved = s ? (await tx.query("SELECT student_id,status,behavior,behavior_max,participation,participation_max,discipline,discipline_max,daily_assessment_required,comment FROM attendance WHERE owner_id=$1 AND session_id=$2", [ownerId, s.id])).rows : [];
   const withdrawals = await tx.query("SELECT a.student_id,min(cs.session_date)::text AS date FROM attendance a JOIN class_sessions cs ON cs.id=a.session_id AND cs.owner_id=a.owner_id WHERE a.owner_id=$1 AND cs.course_id=$2 AND a.status='R' GROUP BY a.student_id", [ownerId,courseId]);
   const withdrawnFrom = new Map(withdrawals.rows.map(row=>[str(row.student_id),str(row.date)]));
   const byId = new Map(saved.map(x => [str(x.student_id), x]));
-  const rows: AttendanceRow[] = roster.filter(x => x.active || byId.has(x.id)).map(x => { const row = byId.get(x.id); const status = withdrawnFrom.has(x.id) && date >= withdrawnFrom.get(x.id)! ? "R" : row?.status as AttendanceRow["status"] ?? null; return { studentId: x.id, number: x.number, name: x.name, status, behavior: status === "R" ? null : num(row?.behavior), comment: str(row?.comment) }; });
+  const rows: AttendanceRow[] = roster.filter(x => x.active || byId.has(x.id)).map(x => { const row = byId.get(x.id); const status = withdrawnFrom.has(x.id) && date >= withdrawnFrom.get(x.id)! ? "R" : row?.status as AttendanceRow["status"] ?? null; const eligible=status==="P"||status==="T"; return { studentId: x.id, number: x.number, name: x.name, status, behavior: eligible ? num(row?.behavior) : null, discipline: eligible ? num(row?.discipline) : null, participation: eligible ? num(row?.participation) : null, participationMax: eligible ? num(row?.participation_max) : null, dailyAssessmentRequired: eligible && Boolean(row?.daily_assessment_required), comment: str(row?.comment) }; });
   const scheduled = calendarSlot.rows.length > 0;
-  return { session: { id: s ? str(s.id) : null, courseId, date, block, lessonType: s?.lesson_type as AttendanceView["session"]["lessonType"] ?? "teoria", topic: str(s?.topic), notes: str(s?.notes), revision: Number(s?.revision ?? 0), scheduled, calendarThrough: str(through.rows[0]?.date)||classCalendar.through, status: sessionStatus(date, rows.map(x => x.status), this.today(), scheduled) }, rows };
+  return { session: { id: s ? str(s.id) : null, courseId, date, block, lessonType: s?.lesson_type as AttendanceView["session"]["lessonType"] ?? "teoria", topic: str(s?.topic), notes: str(s?.notes), revision: Number(s?.revision ?? 0), assessmentRevision:Number(s?.assessment_revision??0), scheduled, calendarThrough: str(through.rows[0]?.date)||classCalendar.through, status: sessionStatus(date, rows.map(x => x.status), this.today(), scheduled) }, rows };
  }
  async attendance(ownerId: string, courseId: string, date: string, block: number): Promise<AttendanceView> { await this.ensureOwner(ownerId); requireDate(date); if (!Number.isInteger(block) || block < 1 || block > 12) throw new AppError(400, "El bloque debe estar entre 1 y 12."); await this.requireCourse(ownerId, courseId); return this.attendanceView(ownerId, courseId, date, block, this.db); }
  async registerSummary(ownerId: string, courseId: string): Promise<CourseRegisterSummary> {
@@ -438,23 +440,52 @@ export class RegistroService {
  }
  async saveAttendance(ownerId: string, input: AttendanceInput): Promise<SaveReceipt> {
   const v = parse(attendanceSchema, input); requireDate(v.date); await this.ensureOwner(ownerId);
-  if (v.date > this.today() && v.rows.some(r => r.status !== null || r.behavior !== null && r.behavior !== undefined)) throw new AppError(400, "Una sesión futura permanece programada: no admite asistencia ni conducta todavía.");
+  if (v.date > this.today() && v.rows.some(r => r.status !== null || r.behavior !== null && r.behavior !== undefined || r.discipline!==null&&r.discipline!==undefined || r.participation!==null&&r.participation!==undefined)) throw new AppError(400, "Una sesión futura permanece programada: no admite asistencia ni valoraciones todavía.");
   return this.operation(ownerId, v.requestId, { operation: "attendance", ...v }, async (tx, operationId) => {
    await this.requireCourse(ownerId, v.courseId, tx); const roster = await this.roster(ownerId, v.courseId, tx); this.validateStudents(v.rows, roster);
    const p = await this.currentPlan(ownerId, tx); const behaviorMax = p.categories.find(c => c.key === "participation")?.dailyMax ?? 10;
-   if (v.rows.some(r => r.behavior !== null && r.behavior !== undefined && r.behavior > behaviorMax)) throw new AppError(400, `La valoración diaria debe estar entre 0 y ${behaviorMax}.`);
+   if (v.rows.some(r => [r.behavior,r.discipline,r.participation].some(value=>value!==null&&value!==undefined&&value>behaviorMax))) throw new AppError(400, `Las valoraciones diarias deben estar entre 0 y ${behaviorMax}.`);
    await tx.query("INSERT INTO class_sessions(id,owner_id,course_id,session_date,block) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner_id,course_id,session_date,block) DO NOTHING", [randomUUID(), ownerId, v.courseId, v.date, v.block]);
    const locked = (await tx.query("SELECT id,revision FROM class_sessions WHERE owner_id=$1 AND course_id=$2 AND session_date=$3 AND block=$4 FOR UPDATE", [ownerId, v.courseId, v.date, v.block])).rows[0];
    if (Number(locked.revision) !== v.revision) throw new AppError(409, "La sesión cambió desde otra pestaña. Recarga conservando tu borrador.", "REVISION_CONFLICT");
    const before = await this.attendanceView(ownerId, v.courseId, v.date, v.block, tx);
    for (const r of v.rows) {
-    const behavior = r.status === "A" || r.status === "E" || r.status === "R" ? null : r.behavior ?? null;
-    await tx.query("INSERT INTO attendance(owner_id,course_id,session_id,student_id,status,behavior,behavior_max,comment) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(session_id,student_id) DO UPDATE SET status=EXCLUDED.status,behavior=EXCLUDED.behavior,behavior_max=EXCLUDED.behavior_max,comment=EXCLUDED.comment,updated_at=now()", [ownerId, v.courseId, locked.id, r.studentId, r.status, behavior, behaviorMax, r.comment ?? ""]);
+    const ineligible = r.status === null || r.status === "A" || r.status === "E" || r.status === "R";
+    await tx.query("INSERT INTO attendance(owner_id,course_id,session_id,student_id,status,behavior,behavior_max,participation,participation_max,discipline,discipline_max,daily_assessment_required,comment) VALUES($1,$2,$3,$4,$5,CASE WHEN NOT $7 AND $8 THEN $9::numeric ELSE NULL::numeric END,$6,CASE WHEN NOT $7 AND $10 THEN $11::numeric ELSE NULL::numeric END,$6,CASE WHEN NOT $7 AND $14 THEN $15::numeric ELSE NULL::numeric END,$6,(NOT $7 AND ($8 OR $10 OR $14)),CASE WHEN $12 THEN $13 ELSE '' END) ON CONFLICT(session_id,student_id) DO UPDATE SET status=EXCLUDED.status,behavior=CASE WHEN $7 THEN NULL ELSE CASE WHEN $8 THEN EXCLUDED.behavior ELSE attendance.behavior END END,behavior_max=EXCLUDED.behavior_max,participation=CASE WHEN $7 THEN NULL ELSE CASE WHEN $10 THEN EXCLUDED.participation ELSE attendance.participation END END,participation_max=EXCLUDED.participation_max,discipline=CASE WHEN $7 THEN NULL ELSE CASE WHEN $14 THEN EXCLUDED.discipline ELSE attendance.discipline END END,discipline_max=EXCLUDED.discipline_max,daily_assessment_required=CASE WHEN $7 THEN false WHEN $8 OR $10 OR $14 THEN true ELSE attendance.daily_assessment_required END,comment=CASE WHEN $12 THEN EXCLUDED.comment ELSE attendance.comment END,updated_at=now()", [ownerId, v.courseId, locked.id, r.studentId, r.status, behaviorMax, ineligible, r.behavior!==undefined, r.behavior??null, r.participation!==undefined, r.participation??null, r.comment!==undefined, r.comment??"", r.discipline!==undefined, r.discipline??null]);
    }
    const revision = v.revision + 1;
    await tx.query("UPDATE class_sessions SET lesson_type=$3,topic=$4,notes=$5,revision=$6,updated_at=now() WHERE owner_id=$1 AND id=$2", [ownerId, locked.id, v.lessonType, v.topic ?? "", v.notes ?? "", revision]);
    const after = await this.attendanceView(ownerId, v.courseId, v.date, v.block, tx); await this.log(tx, ownerId, "attendance.saved", str(locked.id), before, after);
    return { requestId: v.requestId, operationId, savedRows: v.rows.length, revision, entityId: str(locked.id), replayed: false, savedAt: new Date().toISOString(), status: after.session.status };
+  });
+ }
+
+ async saveDailyAssessment(ownerId:string,input:DailyAssessmentInput):Promise<SaveReceipt>{
+  const v=parse(dailyAssessmentSchema,input);requireDate(v.date);await this.ensureOwner(ownerId);
+  if(v.date>this.today())throw new AppError(400,"Una sesión futura permanece programada: no admite participación, comportamiento ni disciplina todavía.");
+  return this.operation(ownerId,v.requestId,{operation:"daily-assessment",...v},async(tx,operationId)=>{
+   await this.requireCourse(ownerId,v.courseId,tx);const roster=await this.roster(ownerId,v.courseId,tx);this.validateStudents(v.rows,roster);
+   const locked=(await tx.query("SELECT id,revision,assessment_revision FROM class_sessions WHERE owner_id=$1 AND course_id=$2 AND session_date=$3 AND block=$4 FOR UPDATE",[ownerId,v.courseId,v.date,v.block])).rows[0];
+   if(!locked)throw new AppError(409,"Primero confirma la asistencia de este curso, fecha y bloque.","ATTENDANCE_REQUIRED");
+   if(Number(locked.revision)!==v.revision)throw new AppError(409,"La asistencia cambió desde que abriste la valoración. Conserva el borrador y vuelve a abrirla.","REVISION_CONFLICT");
+   if(Number(locked.assessment_revision)!==v.assessmentRevision)throw new AppError(409,"La participación o conducta cambió desde otra pestaña. Conserva el borrador y vuelve a cargar la valoración.","ASSESSMENT_REVISION_CONFLICT");
+   const plan=await this.currentPlan(ownerId,tx);const max=plan.categories.find(category=>category.key==="participation")?.dailyMax??10;
+   if(v.rows.some(row=>[row.behavior,row.discipline,row.participation].some(value=>value!==null&&value>max)))throw new AppError(400,`Cada valoración debe estar entre 0 y ${max} puntos.`);
+   const before=await this.attendanceView(ownerId,v.courseId,v.date,v.block,tx);
+   if(!before.rows.some(row=>row.status==="P"||row.status==="T"))throw new AppError(409,"No hay estudiantes presentes o tardíos para valorar en este bloque.","NO_ASSESSABLE_STUDENTS");
+   for(const row of v.rows){
+    const current=before.rows.find(item=>item.studentId===row.studentId);
+    const eligible=current?.status==="P"||current?.status==="T";
+    if(!eligible){
+     await tx.query("UPDATE attendance SET behavior=NULL,participation=NULL,discipline=NULL,daily_assessment_required=false,comment='',updated_at=now() WHERE owner_id=$1 AND session_id=$2 AND student_id=$3",[ownerId,locked.id,row.studentId]);
+     continue;
+    }
+    await tx.query("UPDATE attendance SET behavior=$4,behavior_max=$5,participation=$6,participation_max=$5,discipline=$7,discipline_max=$5,daily_assessment_required=true,comment=$8,updated_at=now() WHERE owner_id=$1 AND session_id=$2 AND student_id=$3",[ownerId,locked.id,row.studentId,row.behavior,max,row.participation,row.discipline,row.comment??""]);
+   }
+   const revision=v.assessmentRevision+1;
+   await tx.query("UPDATE class_sessions SET assessment_revision=$3,updated_at=now() WHERE owner_id=$1 AND id=$2",[ownerId,locked.id,revision]);
+   const after=await this.attendanceView(ownerId,v.courseId,v.date,v.block,tx);await this.log(tx,ownerId,"daily-assessment.saved",str(locked.id),before,after);
+   return {requestId:v.requestId,operationId,savedRows:v.rows.length,revision,entityId:str(locked.id),replayed:false,savedAt:new Date().toISOString(),status:after.session.status};
   });
  }
 
@@ -714,7 +745,10 @@ export class RegistroService {
 
   const participation = p.categories.find(category=>category.key==="participation");
   const behaviorKey="behavior:period";
-  columns.set(behaviorKey,{key:behaviorKey,label:"Disciplina / comportamiento",category:"behavior",categoryLabel:"Conducta diaria",competency:participation?.competency??defaultForCategory("participation"),kind:"behavior",date:null,maxPoints:participation?.dailyMax??10,courseIds:courseRows.map(course=>str(course.id))});
+  const participationKey="participation:period",disciplineKey="discipline:period";
+  columns.set(participationKey,{key:participationKey,label:"Participación diaria",category:"participation",categoryLabel:"Valoración diaria",competency:participation?.competency??defaultForCategory("participation"),kind:"participation",date:null,maxPoints:participation?.dailyMax??10,courseIds:courseRows.map(course=>str(course.id))});
+  columns.set(behaviorKey,{key:behaviorKey,label:"Comportamiento diario",category:"behavior",categoryLabel:"Valoración diaria",competency:participation?.competency??defaultForCategory("participation"),kind:"behavior",date:null,maxPoints:participation?.dailyMax??10,courseIds:courseRows.map(course=>str(course.id))});
+  columns.set(disciplineKey,{key:disciplineKey,label:"Disciplina diaria",category:"discipline",categoryLabel:"Valoración diaria",competency:participation?.competency??defaultForCategory("participation"),kind:"discipline",date:null,maxPoints:participation?.dailyMax??10,courseIds:courseRows.map(course=>str(course.id))});
   const allColumns=[...columns.values()];
   const groups=COMPETENCY_GROUPS.map(group=>({key:group.key,label:group.label,columns:allColumns.filter(column=>column.competency===group.key).sort((a,b)=>(a.date??"").localeCompare(b.date??"")||a.category.localeCompare(b.category)||a.label.localeCompare(b.label))})).filter(group=>group.columns.length);
 
@@ -748,18 +782,32 @@ export class RegistroService {
       scoreByKey.set(key,{key,points:grade.score,possible:column.maxPoints,state:!grade.included?"excluded":grade.score===null?"pending":"graded",pending:grade.score===null?1:0,comment:grade.comment||undefined});
      }
     }
-    const sessions=report.timeline.filter(item=>item.sessionStatus==="impartida");
-    const behaviorValues=sessions.filter(item=>item.status!=="A"&&item.status!=="E").map(item=>item.behavior);
+    const sessions=report.timeline.filter(item=>item.sessionStatus==="impartida"&&item.status!=="R");
+    const dailyMax=participation?.dailyMax??10;
+    const participationValues=sessions.map(item=>item.status==="A"||item.status==="E"?0:item.participation);
+    const participationPoints=round(participationValues.reduce<number>((sum,value)=>sum+(value??0),0));
+    const participationPossible=round(participationValues.length*dailyMax);
+    const participationPending=participationValues.filter(value=>value===null).length;
+    const participationGraded=participationValues.length-participationPending;
+    scoreByKey.set(participationKey,{key:participationKey,points:participationGraded?participationPoints:null,possible:participationPossible,state:participationPossible===0?"not_applicable":participationPending?"pending":"graded",pending:participationPending});
+    const behaviorSessions=sessions.filter(item=>item.status==="P"||item.status==="T"||item.status===null);
+    const behaviorValues=behaviorSessions.map(item=>item.behavior);
     const behaviorPoints=round(behaviorValues.reduce<number>((sum,value)=>sum+(value??0),0));
-    const behaviorPossible=round(behaviorValues.length*(participation?.dailyMax??10));
+    const behaviorPossible=round(behaviorValues.length*dailyMax);
     const behaviorPending=behaviorValues.filter(value=>value===null).length;
     const behaviorGraded=behaviorValues.length-behaviorPending;
     scoreByKey.set(behaviorKey,{key:behaviorKey,points:behaviorGraded?behaviorPoints:null,possible:behaviorPossible,state:behaviorPossible===0?"not_applicable":behaviorPending?"pending":"graded",pending:behaviorPending});
+    const disciplineValues=behaviorSessions.map(item=>item.discipline);
+    const disciplinePoints=round(disciplineValues.reduce<number>((sum,value)=>sum+(value??0),0));
+    const disciplinePossible=round(disciplineValues.length*dailyMax);
+    const disciplinePending=disciplineValues.filter(value=>value===null).length;
+    const disciplineGraded=disciplineValues.length-disciplinePending;
+    scoreByKey.set(disciplineKey,{key:disciplineKey,points:disciplineGraded?disciplinePoints:null,possible:disciplinePossible,state:disciplinePossible===0?"not_applicable":disciplinePending?"pending":"graded",pending:disciplinePending});
     const finalScores=[...scoreByKey.values()];
     const counted=finalScores.filter(score=>score.state!=="excluded"&&score.state!=="not_applicable");
     const rawTotal=round(counted.reduce((sum,score)=>sum+(score.points??0),0));
     const rawPossible=round(counted.reduce((sum,score)=>sum+score.possible,0));
-    const observations=[...report.grades.filter(item=>item.comment.trim()).map(item=>`${item.title}: ${item.comment.trim()}`),...report.timeline.filter(item=>item.comment.trim()).map(item=>`${item.date} · Disciplina: ${item.comment.trim()}`)];
+    const observations=[...report.grades.filter(item=>item.comment.trim()).map(item=>`${item.title}: ${item.comment.trim()}`),...report.timeline.filter(item=>item.comment.trim()).map(item=>`${item.date} · Registro diario: ${item.comment.trim()}`)];
     rows.push({course,student,categories:report.categories,scores:finalScores,rawTotal,rawPossible,bonusPoints:report.bonusPoints,bonusPossible:report.bonusPossible,weightedTotal:report.total??report.provisionalTotal,finalized:report.total!==null,observations});
    }
   }
@@ -916,11 +964,12 @@ export class RegistroService {
   if (!input || !/^[\p{L}\p{N} _.-]{1,80}$/u.test(input.period) || !Array.isArray(input.categories) || input.categories.length !== 5 || new Set(input.categories.map(c => c.key)).size !== 5) throw new AppError(400, "El plan requiere un período y sus cinco categorías.");
   requireDate(input.startDate); requireDate(input.endDate); if (input.startDate > input.endDate) throw new AppError(400, "El período termina antes de empezar.");
   const keys = new Set(plan().categories.map(c => c.key)); let total = 0;
-  for (const c of input.categories) { if (!keys.has(c.key) || !c.label?.trim() || !Number.isFinite(c.weight) || c.weight < 0 || c.weight > 100 || c.expectedRaw !== null && (!Number.isFinite(c.expectedRaw) || c.expectedRaw <= 0) || c.dailyMax !== null && (!Number.isFinite(c.dailyMax) || c.dailyMax <= 0 || c.dailyMax > 10000) || c.targetSessions !== null && (!Number.isInteger(c.targetSessions) || c.targetSessions < 1)) throw new AppError(400, "Revisa pesos, máximos y número de sesiones del plan."); total += c.weight; }
+  for (const c of input.categories) { if (!keys.has(c.key) || !c.label?.trim() || !Number.isFinite(c.weight) || c.weight < 0 || c.weight > 100 || c.expectedRaw !== null && (!Number.isFinite(c.expectedRaw) || c.expectedRaw <= 0) || c.dailyMax !== null && (!Number.isFinite(c.dailyMax) || c.dailyMax <= 0 || c.dailyMax > 10000) || c.targetSessions !== null && (!Number.isInteger(c.targetSessions) || c.targetSessions < 1)) throw new AppError(400, "Revisa pesos, máximos y número de sesiones del plan."); if(c.key==="participation"&&c.dailyWeights){const totalShare=c.dailyWeights.participation+c.dailyWeights.behavior+c.dailyWeights.discipline;if(round(totalShare)!==100||c.dailyWeights.behavior<=c.dailyWeights.discipline)throw new AppError(400,"La distribución diaria debe sumar 100%; comportamiento debe tener más porcentaje que disciplina.");} total += c.weight; }
   if (round(total) !== 100) throw new AppError(400, "Los pesos del período deben sumar 100.");
   if (input.status !== "provisional" && input.status !== "confirmed") throw new AppError(400, "El estado del plan no es válido.");
   if (input.status === "confirmed" && input.categories.some(c => c.dailyMax === null && c.expectedRaw === null)) throw new AppError(400, "Completa el máximo bruto previsto de cada categoría antes de confirmar el plan.");
-  const categories: EvaluationPlan["categories"] = input.categories.map(c => ({ key: c.key, label: c.label.trim(), ...(c.group ? { group: c.group.trim() } : {}), weight: c.weight, expectedRaw: c.expectedRaw, dailyMax: c.dailyMax, targetSessions: c.targetSessions, competency: c.competency ?? defaultForCategory(c.key) }));
+  if(input.status==="confirmed"&&!input.categories.find(c=>c.key==="participation")?.dailyWeights)throw new AppError(400,"Distribuye los 100% internos entre participación, comportamiento y disciplina antes de confirmar el plan.");
+  const categories: EvaluationPlan["categories"] = input.categories.map(c => ({ key: c.key, label: c.label.trim(), ...(c.group ? { group: c.group.trim() } : {}), weight: c.weight, expectedRaw: c.expectedRaw, dailyMax: c.dailyMax, targetSessions: c.targetSessions, competency: c.competency ?? defaultForCategory(c.key),...(c.key==="participation"?{dailyWeights:c.dailyWeights??null}:{}) }));
   const clean: EvaluationPlan = normalizedPlan({ period: input.period, startDate: input.startDate, endDate: input.endDate, status: input.status, categories, note: str(input.note).slice(0,4000), ...(input.sequence?{sequence:input.sequence}:{}) });
   return this.db.transaction(async tx => {
    await tx.query("SELECT owner_id FROM workspaces WHERE owner_id=$1 FOR UPDATE",[ownerId]);
@@ -940,7 +989,7 @@ export class RegistroService {
 
  async report(ownerId: string, courseId: string, studentId: string, requestedPeriod?: string): Promise<StudentReport> {
   await this.ensureOwner(ownerId); const c = await this.requireCourse(ownerId, courseId); const person = (await this.roster(ownerId, courseId)).find(s => s.id === studentId); if (!person) throw new AppError(404, "El estudiante no pertenece a este curso.", "NOT_FOUND"); const p = requestedPeriod ? await this.planForPeriod(ownerId, requestedPeriod) : await this.currentPlan(ownerId);
-  const sessions = (await this.db.query("SELECT s.id,s.session_date::text AS date,s.block,a.status,a.behavior,a.behavior_max,a.comment,EXISTS(SELECT 1 FROM scheduled_sessions cal WHERE cal.owner_id=s.owner_id AND cal.course_id=s.course_id AND cal.session_date=s.session_date AND cal.block=s.block) AS scheduled,(SELECT count(*) FROM attendance marks WHERE marks.session_id=s.id AND marks.owner_id=s.owner_id AND marks.status IN ('P','A','T','E')) AS mark_count FROM class_sessions s LEFT JOIN attendance a ON a.session_id=s.id AND a.student_id=$3 AND a.owner_id=s.owner_id WHERE s.owner_id=$1 AND s.course_id=$2 AND s.session_date BETWEEN $4 AND $5 ORDER BY s.session_date,s.block", [ownerId, courseId, studentId, p.startDate, p.endDate])).rows;
+  const sessions = (await this.db.query("SELECT s.id,s.session_date::text AS date,s.block,a.status,a.behavior,a.behavior_max,a.participation,a.participation_max,a.discipline,a.discipline_max,a.daily_assessment_required,a.comment,EXISTS(SELECT 1 FROM scheduled_sessions cal WHERE cal.owner_id=s.owner_id AND cal.course_id=s.course_id AND cal.session_date=s.session_date AND cal.block=s.block) AS scheduled,(SELECT count(*) FROM attendance marks WHERE marks.session_id=s.id AND marks.owner_id=s.owner_id AND marks.status IN ('P','A','T','E')) AS mark_count FROM class_sessions s LEFT JOIN attendance a ON a.session_id=s.id AND a.student_id=$3 AND a.owner_id=s.owner_id WHERE s.owner_id=$1 AND s.course_id=$2 AND s.session_date BETWEEN $4 AND $5 ORDER BY s.session_date,s.block", [ownerId, courseId, studentId, p.startDate, p.endDate])).rows;
   const withdrawal = await this.db.query("SELECT min(s.session_date)::text AS date FROM attendance a JOIN class_sessions s ON s.id=a.session_id AND s.owner_id=a.owner_id WHERE a.owner_id=$1 AND s.course_id=$2 AND a.student_id=$3 AND a.status='R'", [ownerId,courseId,studentId]);
   const withdrawnFrom = str(withdrawal.rows[0]?.date) || null;
   const effectiveSessions: Row[] = sessions.map(row=>({...row,status:withdrawnFrom&&str(row.date)>=withdrawnFrom?"R":row.status as AttendanceRow["status"]??null}));
@@ -956,6 +1005,41 @@ export class RegistroService {
   const bonusPoints=round(bonusActivities.reduce((sum,g)=>sum+(g.score??0),0));
   const bonusPossible=round(bonusActivities.reduce((sum,g)=>sum+g.maxPoints,0));
   const categories: CategoryReport[] = p.categories.map(cat => {
+   if (cat.key === "participation" && cat.dailyWeights) {
+    const maximum=cat.dailyMax??10;const sessionsForDaily=taught.filter(item=>item.status!=="R");
+    const rated=(key:"participation"|"behavior"|"discipline",eligible:(status:AttendanceRow["status"])=>boolean,absenceIsZero:boolean)=>{
+     const entries=sessionsForDaily.flatMap(session=>{
+      const status=session.status as AttendanceRow["status"]??null;
+      if(status==="R")return [];
+      if(absenceIsZero&&(status==="A"||status==="E"))return [{score:0,max:num(session.participation_max)??maximum}];
+      if(status!==null&&!eligible(status))return [];
+      const score=num(session[key]),max=num(session[key==="participation"?"participation_max":key==="behavior"?"behavior_max":"discipline_max"])??maximum;
+      return [{score,max}];
+     });
+     return {earned:round(entries.reduce((sum,entry)=>sum+(entry.score??0),0)),possible:round(entries.reduce((sum,entry)=>sum+entry.max,0)),observed:round(entries.reduce((sum,entry)=>sum+(entry.score===null?0:entry.max),0)),graded:entries.filter(entry=>entry.score!==null).length,pending:entries.filter(entry=>entry.score===null).length};
+    };
+    const participation=rated("participation",status=>status==="P"||status==="T",true);
+    const behavior=rated("behavior",status=>status==="P"||status==="T",false);
+    const discipline=rated("discipline",status=>status==="P"||status==="T",false);
+    const activities=grades.filter(grade=>grade.category==="participation"&&grade.included);
+    participation.earned=round(participation.earned+activities.reduce((sum,grade)=>sum+(grade.score??0),0));
+    participation.possible=round(participation.possible+activities.reduce((sum,grade)=>sum+grade.maxPoints,0));
+    participation.observed=round(participation.observed+activities.reduce((sum,grade)=>sum+(grade.score===null?0:grade.maxPoints),0));
+    participation.graded+=activities.filter(grade=>grade.score!==null).length;participation.pending+=activities.filter(grade=>grade.score===null).length;
+    const shares=cat.dailyWeights;const sharePoints={participation:cat.weight*shares.participation/100,behavior:cat.weight*shares.behavior/100,discipline:cat.weight*shares.discipline/100};
+    const pointFor=(earned:number,possible:number,share:number)=>possible?round(share*earned/possible):0;
+    const dailyBreakdown={
+     participation:{percentage:shares.participation,rawEarned:participation.earned,rawPossible:participation.possible,points:pointFor(participation.earned,participation.possible,sharePoints.participation)},
+     behavior:{percentage:shares.behavior,rawEarned:behavior.earned,rawPossible:behavior.possible,points:pointFor(behavior.earned,behavior.possible,sharePoints.behavior)},
+     discipline:{percentage:shares.discipline,rawEarned:discipline.earned,rawPossible:discipline.possible,points:pointFor(discipline.earned,discipline.possible,sharePoints.discipline)},
+    };
+    const rawEarned=round(participation.earned+behavior.earned+discipline.earned),rawPossible=round(participation.possible+behavior.possible+discipline.possible),observed=round(participation.observed+behavior.observed+discipline.observed);
+    const pending=(shares.participation>0?participation.pending:0)+(shares.behavior>0?behavior.pending:0)+(shares.discipline>0?discipline.pending:0);
+    const graded=(shares.participation>0?participation.graded:0)+(shares.behavior>0?behavior.graded:0)+(shares.discipline>0?discipline.graded:0);
+    const points=rawPossible?round(dailyBreakdown.participation.points+dailyBreakdown.behavior.points+dailyBreakdown.discipline.points):null;
+    const periodOpen=p.endDate>=this.today();
+    return {key:cat.key,label:cat.label,group:cat.group,weight:cat.weight,rawEarned,rawPossible,expectedRaw:rawPossible,graded,pending,denominator:rawPossible,points,observedDenominator:observed,observedPercent:observed?round(rawEarned/observed*100):null,planIncomplete:!rawPossible,provisional:p.status!=="confirmed"||!rawPossible||pending>0||periodOpen,dailyBreakdown};
+   }
    if (cat.key === "participation" || cat.key === "notebook") {
     const max = cat.dailyMax ?? (cat.key === "participation" ? 10 : 2);
     const dailySessions = cat.key === "participation" ? taught.filter(s => s.status !== "A" && s.status !== "E" && s.status !== "R") : taught.filter(s => s.status !== "R");
@@ -969,7 +1053,8 @@ export class RegistroService {
     const observed = round(observedDenominator + participationActivities.reduce((sum,g) => sum + (g.score === null ? 0 : g.maxPoints),0));
     const graded = scores.filter(x => x !== null).length + participationActivities.filter(g => g.score !== null).length;
     const pending = scores.filter(x => x === null).length + participationActivities.filter(g => g.score === null).length;
-    return { key: cat.key, label: cat.label, group: cat.group, weight: cat.weight, rawEarned, rawPossible, expectedRaw: target, graded, pending, denominator: target, points: observed && target && rawPossible <= target ? round(rawEarned / target * cat.weight) : null, observedDenominator: observed, observedPercent: observed ? round(rawEarned / observed * 100) : null, planIncomplete: !target || rawPossible !== target, provisional: p.status !== "confirmed" || !target || pending > 0 || rawPossible !== target };
+    const noAllocation=cat.key==="participation";
+    return { key: cat.key, label: cat.label, group: cat.group, weight: cat.weight, rawEarned, rawPossible, expectedRaw: target, graded, pending, denominator: target, points: noAllocation?null:observed && target && rawPossible <= target ? round(rawEarned / target * cat.weight) : null, observedDenominator: observed, observedPercent: observed ? round(rawEarned / observed * 100) : null, planIncomplete: !target || rawPossible !== target || noAllocation, provisional: p.status !== "confirmed" || !target || pending > 0 || rawPossible !== target || noAllocation };
    }
    const relevant = grades.filter(g => g.category === cat.key), rawEarned = round(relevant.reduce((sum, g) => sum + (g.score ?? 0), 0)), rawPossible = round(relevant.reduce((sum, g) => sum + g.maxPoints, 0)), target = cat.expectedRaw ?? rawPossible;
    const observedDenominator = round(relevant.reduce((sum,g) => sum+(g.score === null ? 0 : g.maxPoints),0));
@@ -1019,8 +1104,10 @@ export class RegistroService {
   });
   const directEvaluation=await studentPeriodSheet(this.db,ownerId,p.period,studentId);
   const known = categories.filter(c => c.points !== null); const complete = p.status === "confirmed" && categories.every(c => !c.provisional && c.points !== null && c.pending === 0);
-  return { student: person, course: { id: str(c.id), code: str(c.code), name: str(c.name) }, plan: p, attendance: stats, categories, competencies, ...(directEvaluation?{directEvaluation}:{}), bonusPoints:directEvaluation?0:bonusPoints, bonusPossible:directEvaluation?0:bonusPossible, total: directEvaluation?directEvaluation.total:complete ? round(categories.reduce((sum, c) => sum + (c.points ?? 0), 0)+bonusPoints) : null, provisionalTotal: directEvaluation?directEvaluation.accumulated:known.length ? round(known.reduce((sum, c) => sum + (c.points ?? 0), 0)+bonusPoints) : bonusPoints ? bonusPoints : null, grades, timeline: effectiveSessions.map(s => ({ date: str(s.date), block: Number(s.block), status: s.status as AttendanceRow["status"] ?? null, behavior: s.status === "A" || s.status === "E" || s.status === "R" ? null : num(s.behavior), comment: str(s.comment), sessionStatus: sessionStatus(str(s.date), Number(s.mark_count) ? ["P"] : [], this.today(), Boolean(s.scheduled)) })), notices: directEvaluation?["La nota del período suma únicamente las columnas del cuadro. Las actividades y valoraciones diarias se conservan por separado sin sumarse otra vez.","Los vacíos permanecen pendientes. La nota se completa cuando hay 100 puntos distribuidos y todas las columnas tienen nota."]:["Solo las sesiones del horario con marcas de asistencia cuentan como impartidas. Una fecha fuera del calendario no se convierte en ausencia ni en clase no impartida.", "El porcentaje usa las sesiones trabajadas; las excusas quedan registradas por separado, tres tardanzas equivalen a una ausencia y R se aplica desde la fecha de retiro.", "Las ausencias, excusas y retiros no generan una nota de conducta; el promedio usa las sesiones que sí permiten valorar el comportamiento.", "El resumen por competencia suma puntos asignados a criterios; el cálculo de nota final por categoría sigue separado.", "Los puntos extra se suman aparte de las cinco categorías y no cambian sus máximos.", "La nota final permanece pendiente mientras falten actividades, calificaciones o sesiones previstas.", ...(grades.some(g => !g.included && g.score !== null) ? ["Hay notas de libreta conservadas en fechas sin clase impartida; no se incluyen en el cálculo diario."] : [])] };
- }
+  const notices = directEvaluation
+   ? ["El cuadro directo determina la nota del período; las actividades y valoraciones diarias se conservan aparte y no se suman otra vez.", "Los vacíos permanecen pendientes. La nota se completa cuando hay 100 puntos distribuidos y todas las columnas tienen nota.", "La captura diaria conserva asistencia, participación, comportamiento y disciplina en sus registros, aunque este cuadro sea la fuente de la nota final."]
+   : ["Solo las sesiones del horario con marcas de asistencia cuentan como impartidas. Una fecha fuera del calendario no se convierte en ausencia ni en clase no impartida.", "El porcentaje usa las sesiones trabajadas; las excusas quedan registradas por separado, tres tardanzas equivalen a una ausencia y R se aplica desde la fecha de retiro.", "Participación obtiene cero cuando hay ausencia o excusa; comportamiento y disciplina no se valoran si el estudiante no asistió.", "El resumen por competencia suma puntos asignados a criterios; el cálculo de nota final por categoría sigue separado.", "Los puntos extra se suman aparte de las cinco categorías y no cambian sus máximos.", "La nota final permanece pendiente mientras falten actividades, calificaciones o sesiones previstas.", ...(grades.some(g => !g.included && g.score !== null) ? ["Hay notas de libreta conservadas en fechas sin clase impartida; no se incluyen en el cálculo diario."] : [])];
+  return { student: person, course: { id: str(c.id), code: str(c.code), name: str(c.name) }, plan: p, attendance: stats, categories, competencies, ...(directEvaluation ? { directEvaluation } : {}), bonusPoints: directEvaluation ? 0 : bonusPoints, bonusPossible: directEvaluation ? 0 : bonusPossible, total: directEvaluation ? directEvaluation.total : complete ? round(categories.reduce((sum, c) => sum + (c.points ?? 0), 0) + bonusPoints) : null, provisionalTotal: directEvaluation ? directEvaluation.accumulated : known.length ? round(known.reduce((sum, c) => sum + (c.points ?? 0), 0) + bonusPoints) : bonusPoints ? bonusPoints : null, grades, timeline: effectiveSessions.map(s => ({ date: str(s.date), block: Number(s.block), status: s.status as AttendanceRow["status"] ?? null, behavior: s.status === "A" || s.status === "E" || s.status === "R" ? null : num(s.behavior), discipline: s.status === "A" || s.status === "E" || s.status === "R" ? null : num(s.discipline), participation: s.status === "A" || s.status === "E" ? 0 : s.status === "R" ? null : num(s.participation), dailyAssessmentRequired: Boolean(s.daily_assessment_required), comment: str(s.comment), sessionStatus: sessionStatus(str(s.date), Number(s.mark_count) ? ["P"] : [], this.today(), Boolean(s.scheduled)) })), notices }; }
 
  async competencySummary(ownerId: string, courseId: string) {
   await this.ensureOwner(ownerId);

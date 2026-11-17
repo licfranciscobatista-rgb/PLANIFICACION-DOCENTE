@@ -32,10 +32,11 @@ CREATE TABLE IF NOT EXISTS class_sessions (
  session_date date NOT NULL, block integer NOT NULL CHECK(block BETWEEN 1 AND 12),
  lesson_type text NOT NULL DEFAULT 'teoria' CHECK(lesson_type IN ('teoria','practica','ejercicios','repaso','correcciones','actividad_escolar')),
  topic text NOT NULL DEFAULT '', notes text NOT NULL DEFAULT '',
- revision integer NOT NULL DEFAULT 0 CHECK(revision>=0), updated_at timestamptz NOT NULL DEFAULT now(),
+ revision integer NOT NULL DEFAULT 0 CHECK(revision>=0), assessment_revision integer NOT NULL DEFAULT 0 CHECK(assessment_revision>=0), updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(owner_id,course_id,session_date,block), UNIQUE(id,course_id,owner_id),
  FOREIGN KEY(course_id,owner_id) REFERENCES courses(id,owner_id)
 );
+ALTER TABLE class_sessions ADD COLUMN IF NOT EXISTS assessment_revision integer NOT NULL DEFAULT 0 CHECK(assessment_revision>=0);
 CREATE TABLE IF NOT EXISTS scheduled_sessions (
  owner_id text NOT NULL,
  course_id uuid NOT NULL,
@@ -49,12 +50,26 @@ CREATE TABLE IF NOT EXISTS attendance (
  status text CHECK(status IS NULL OR status IN ('P','A','T','E','R')),
  behavior numeric CHECK(behavior IS NULL OR behavior BETWEEN 0 AND 10000),
  behavior_max numeric NOT NULL DEFAULT 10 CHECK(behavior_max>0),
+ participation numeric CHECK(participation IS NULL OR participation BETWEEN 0 AND 10000),
+ participation_max numeric NOT NULL DEFAULT 10 CHECK(participation_max>0),
+ discipline numeric CHECK(discipline IS NULL OR discipline BETWEEN 0 AND 10000),
+ discipline_max numeric NOT NULL DEFAULT 10 CHECK(discipline_max>0),
+ daily_assessment_required boolean NOT NULL DEFAULT false,
  comment text NOT NULL DEFAULT '', updated_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY(session_id,student_id),
  CHECK(behavior IS NULL OR behavior<=behavior_max),
  FOREIGN KEY(session_id,course_id,owner_id) REFERENCES class_sessions(id,course_id,owner_id),
  FOREIGN KEY(student_id,course_id,owner_id) REFERENCES students(id,course_id,owner_id)
 );
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS participation numeric;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS participation_max numeric NOT NULL DEFAULT 10 CHECK(participation_max>0);
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS discipline numeric;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS discipline_max numeric NOT NULL DEFAULT 10 CHECK(discipline_max>0);
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS daily_assessment_required boolean NOT NULL DEFAULT false;
+ALTER TABLE attendance DROP CONSTRAINT IF EXISTS attendance_participation_range;
+ALTER TABLE attendance ADD CONSTRAINT attendance_participation_range CHECK(participation IS NULL OR participation BETWEEN 0 AND participation_max);
+ALTER TABLE attendance DROP CONSTRAINT IF EXISTS attendance_discipline_range;
+ALTER TABLE attendance ADD CONSTRAINT attendance_discipline_range CHECK(discipline IS NULL OR discipline BETWEEN 0 AND discipline_max);
 ALTER TABLE attendance DROP CONSTRAINT IF EXISTS attendance_status_check;
 ALTER TABLE attendance ADD CONSTRAINT attendance_status_check CHECK(status IS NULL OR status IN ('P','A','T','E','R'));
 CREATE TABLE IF NOT EXISTS activities (

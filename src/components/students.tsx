@@ -143,7 +143,7 @@ function validateRoster(rows: RosterRow[], course: Course) {
   return [...new Set(errors)];
 }
 
-export default function StudentPanel({ course, onChange, onOpenAttendance, onOpenBehavior }: { course: Course; onChange: () => void; onOpenAttendance: () => void; onOpenBehavior: () => void }) {
+export default function StudentPanel({ course, onChange, onOpenAttendance }: { course: Course; onChange: () => void; onOpenAttendance: () => void }) {
   const [parsed, setParsed] = useState<ParsedRoster | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -191,7 +191,7 @@ export default function StudentPanel({ course, onChange, onOpenAttendance, onOpe
   }
 
   return <section aria-labelledby="students-title">
-    <div className="section-heading"><div><p className="eyebrow">Lista e identidad</p><h2 id="students-title">Estudiantes de {course.code}</h2><p className="muted">{students.length} estudiantes. Esta lista alimenta los registros del curso de asistencia, comportamiento y calificaciones.</p></div><div className="toolbar"><button className="button secondary" type="button" onClick={() => downloadJson(`lista-${course.code}.json`, students.map(student => ({ id: student.externalId, numero: student.number, nombre: student.name })))}>Descargar lista</button><button className="button secondary" type="button" disabled={!students.some(student=>student.active)} onClick={onOpenAttendance}><CalendarCheck2 size={16}/> Asistencia</button><button className="button primary" type="button" disabled={!students.some(student=>student.active)} onClick={onOpenBehavior}><Activity size={16}/> Comportamiento</button></div></div>
+    <div className="section-heading"><div><p className="eyebrow">Lista e identidad</p><h2 id="students-title">Estudiantes de {course.code}</h2><p className="muted">{students.length} estudiantes. Esta lista alimenta el registro diario y las calificaciones del curso.</p></div><div className="toolbar"><button className="button secondary" type="button" onClick={() => downloadJson(`lista-${course.code}.json`, students.map(student => ({ id: student.externalId, numero: student.number, nombre: student.name })))}>Descargar lista</button><button className="button secondary" type="button" disabled={!students.some(student=>student.active)} onClick={onOpenAttendance}><CalendarCheck2 size={16}/> Registro diario</button></div></div>
     <div className="metrics compact student-course-summary"><div className="metric"><span>Estudiantes en la lista</span><strong>{students.length}</strong></div><div className="metric"><span>Activos</span><strong>{students.filter(student => student.active).length}</strong></div><div className="metric"><span>Inactivos</span><strong>{students.filter(student => !student.active).length}</strong></div></div>
     {error && <div className="notice error" role="alert">{error}</div>}
     {success && <div className="notice success" role="status">{success}</div>}
