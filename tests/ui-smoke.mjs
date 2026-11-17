@@ -65,9 +65,12 @@ try {
   await page.getByRole('heading',{name:'Asistencia del día'}).waitFor();
   await page.getByRole('button',{name:/Todos presentes/}).click();
   await marks('Estudiante 5A 02','A').click();
+  await marks('Estudiante 5A 03','P').click();
   await page.getByLabel('Tema trabajado').fill('Vectores · prueba interfaz');
-  await page.getByRole('button',{name:'Guardar registro del día'}).click();
-  await page.getByText(/Guardado confirmado · 21 estudiantes/).waitFor();
+  await page.getByRole('button',{name:'Revisar y confirmar'}).click();
+  await page.getByRole('heading',{name:'Confirma la lista de 5A'}).waitFor();
+  await page.getByRole('button',{name:'Confirmar con 1 pendiente(s)'}).click();
+  await page.getByText(/Asistencia confirmada · 21 estudiantes · 1 pendiente/).waitFor();
   await page.reload({waitUntil:'networkidle'});
   await goAttendance('Registro diario');
   await page.getByRole('button',{name:/Todos presentes/}).waitFor();
@@ -91,8 +94,8 @@ try {
 
   await goAttendance('Comportamiento');
   await page.getByRole('spinbutton',{name:'Comportamiento Estudiante 5A 01'}).fill('0');
-  await page.getByRole('button',{name:'Guardar registro del día'}).click();
-  await page.getByText(/Guardado confirmado · 21 estudiantes/).waitFor();
+  await page.getByRole('button',{name:'Guardar conducta'}).click();
+  await page.getByText(/Conducta guardada · 21 estudiantes/).waitFor();
   await page.reload({waitUntil:'networkidle'});
   await goAttendance('Comportamiento');
   assert((await page.getByRole('spinbutton',{name:'Comportamiento Estudiante 5A 01'}).inputValue())==='0','cero de comportamiento se distingue de pendiente al recargar');
@@ -103,14 +106,16 @@ try {
   await page.getByRole('button',{name:/Todos presentes/}).waitFor();
   assert(await page.locator('.attendance-table tbody tr').count()===19,'cambio a 5B presenta 19 estudiantes, no arrastra la lista 5A');
   await page.getByRole('button',{name:/Todos presentes/}).click();
-  await page.getByRole('button',{name:'Guardar registro del día'}).click();
-  await page.getByText(/Guardado confirmado · 19 estudiantes/).waitFor();
+  await page.getByRole('button',{name:'Revisar y confirmar'}).click();
+  await page.getByRole('button',{name:'Confirmar asistencia'}).click();
+  await page.getByText(/Asistencia confirmada · 19 estudiantes/).waitFor();
   await page.locator('.course-tabs button').filter({hasText:'5C'}).click();
   await page.getByRole('button',{name:/Todos presentes/}).waitFor();
   assert(await page.locator('.attendance-table tbody tr').count()===21,'cambio a 5C presenta 21 estudiantes');
   await page.getByRole('button',{name:/Todos presentes/}).click();
-  await page.getByRole('button',{name:'Guardar registro del día'}).click();
-  await page.getByText(/Guardado confirmado · 21 estudiantes/).waitFor();
+  await page.getByRole('button',{name:'Revisar y confirmar'}).click();
+  await page.getByRole('button',{name:'Confirmar asistencia'}).click();
+  await page.getByText(/Asistencia confirmada · 21 estudiantes/).waitFor();
 
   await page.locator('.course-tabs button').filter({hasText:'5A'}).click();
   await goActivities();
@@ -302,12 +307,12 @@ try {
   await page.locator('input[aria-label="Buscar estudiante"]').fill('Estudiante 5C 01');
   assert(await page.locator('.attendance-table tbody tr').count()===1,'filtro visual limita filas sin quitar estudiantes del curso');
   allowExpected503=true; await page.route('**/api/registro',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'simulación de red interrumpida'})}));
-  await page.getByRole('button',{name:'Guardar registro del día'}).click();
+  await page.getByRole('button',{name:'Guardar conducta'}).click();
   await page.getByText(/simulación de red interrumpida/).waitFor();
   assert((await page.locator('.notice.draft-notice').count())===1,'una respuesta de error conserva el borrador');
   await page.unroute('**/api/registro'); allowExpected503=false;
-  await page.getByRole('button',{name:'Guardar registro del día'}).click();
-  await page.getByText(/Guardado confirmado · 21 estudiantes/).waitFor();
+  await page.getByRole('button',{name:'Guardar conducta'}).click();
+  await page.getByText(/Conducta guardada · 21 estudiantes/).waitFor();
   await page.getByRole('button',{name:/Informe por estudiante/}).click();
   await page.locator('label.field select').locator('option').filter({hasText:'Estudiante 5C 02'}).waitFor({state:'attached'});
   await chooseOption(page.locator('label.field select'),'Estudiante 5C 02');
