@@ -1,0 +1,227 @@
+/* Summary-first course setup. Administration expands only for the selected course. */
+.course-summary-metrics{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:0}
+.course-overview-panel .table-toolbar{align-items:flex-start}
+.course-overview-panel .table-toolbar .eyebrow{margin:0 0 5px}
+.course-overview-card{display:flex;flex-direction:column;align-items:stretch;gap:12px;min-width:0;padding:16px}
+.course-overview-card.is-open{border-color:#84bca7;box-shadow:0 0 0 2px #84bca71a}
+.course-overview-identity{display:flex;align-items:center;gap:10px;min-width:0}
+.course-overview-icon{display:grid;place-items:center;flex:none;width:38px;height:38px;border-radius:10px;background:#e9f4ee;color:#45836e}
+.course-overview-identity>div{min-width:0}
+.course-overview-identity h3{font-size:14px}
+.course-overview-identity p{margin:3px 0 0;color:#687d81;font-size:10px;overflow-wrap:anywhere}
+.course-overview-stats{display:grid;grid-template-columns:auto 1fr;align-items:baseline;gap:0 6px}
+.course-overview-stats strong{font-family:Manrope,sans-serif;font-size:25px;line-height:1.1;color:var(--ink)}
+.course-overview-stats span{font-size:10px;color:#71818b}
+.course-overview-stats small{grid-column:1/-1;margin-top:4px;color:#839399;font-size:9px}
+.course-list-status{align-self:flex-start;padding:4px 8px;border-radius:20px;font-size:9px;font-weight:700}
+.course-list-status.ready{background:#e7f4ed;color:#387b5a}
+.course-list-status.pending{background:#fff3df;color:#9a7029}
+.course-overview-card>.button{width:100%;justify-content:center}
+.course-administration-panel{scroll-margin-top:18px}
+
+/* Shared summary-first pattern for roster and evaluation setup sections. */
+.student-directory-summary,.student-course-summary{margin-top:0}
+.roster-workbook-import{padding:0}
+.roster-workbook-summary{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 22px;cursor:pointer;list-style:none}
+.roster-workbook-summary::-webkit-details-marker,.student-management-disclosure>summary::-webkit-details-marker{display:none}
+.roster-workbook-summary>div{min-width:0}
+.roster-workbook-summary .eyebrow{margin-bottom:4px}
+.roster-workbook-summary h2{display:flex;align-items:center;gap:8px;font-size:17px}
+.roster-workbook-summary p:last-child{margin-top:5px;color:var(--muted);font-size:11px}
+.roster-workbook-body{padding:0 22px 22px;border-top:1px solid var(--line)}
+.roster-workbook-body>.roster-workbook-note{margin-top:14px}
+.student-management-disclosure{padding:0}
+.student-management-disclosure>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 20px;cursor:pointer;list-style:none}
+.student-management-disclosure>summary strong{font-size:13px}
+.student-management-disclosure>summary span{font-size:11px;color:var(--muted)}
+.student-management-body{padding:0 18px 8px;border-top:1px solid var(--line)}
+.student-management-body>.panel{margin-top:14px}
+.student-roster-summary{padding-top:4px}
+.criteria-catalog-count{margin-top:8px;font-size:11px;color:var(--muted)}
+.criteria-admin-workspace{padding:0 22px 20px;border-top:1px solid var(--line)}
+.criteria-admin-actions{padding:18px 0}
+.criterion-level-disclosure{padding:0 20px 18px}
+.criterion-level-disclosure>summary{padding:8px 0;color:var(--teal);font-size:11px;font-weight:650;cursor:pointer}
+.sequence-saved-summary{padding:18px 22px 22px}
+.sequence-saved-summary>.metrics{margin-top:0}
+.sequence-saved-activities{display:grid;gap:10px}
+.sequence-saved-activities .sequence-activity-card{margin:0}
+.sequence-saved-activities .sequence-activity-card p{margin:8px 0 0;color:var(--muted);font-size:12px}
+
+/* The toggle is global: it appears on sign-in, the register and the planning previews. */
+.theme-toggle{position:fixed;z-index:120;top:18px;right:24px;min-height:36px;padding:7px 11px;font-size:10px;box-shadow:0 2px 12px #17303810}
+.theme-toggle svg{flex:none}
+.app-shell .topbar-right{padding-right:152px}
+
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#101719;
+  --panel:#192327;
+  --ink:#e5edef;
+  --muted:#a4b2b5;
+  --line:#2d3b40;
+  --teal:#63c8ba;
+  --teal-dark:#48ac9f;
+  --teal-pale:#1b3835;
+  --sidebar:#091b20;
+  --shadow:0 8px 32px #0005;
+}
+html[data-theme="dark"] body,
+html[data-theme="dark"] .app-shell,
+html[data-theme="dark"] .app-main,
+html[data-theme="dark"] .workspace{background:var(--bg);color:var(--ink)}
+html[data-theme="dark"] .panel{background-color:var(--panel);background-image:none;border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] :is(.topbar,.panel,.metric,.course-card,.course-manage-card,.drawer,.login-card,.roster-workbook-course,.criterion-editor,.activity-advanced-options,.sequence-activity-card,.source-instrument-levels>div,.criteria-import-preview,.indicator-usage-card,.activity-preparation-card,.activity-selector,.plan-overview){background-color:var(--panel);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] :is(.student-management-disclosure,.roster-workbook-import){background-color:var(--panel);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .topbar{background:#172226ed;border-bottom-color:var(--line)}
+html[data-theme="dark"] .sidebar{background:var(--sidebar)}
+html[data-theme="dark"] .home-hero{background:linear-gradient(110deg,#1c312c,#20362f 65%,#1b332c);border-color:#315149}
+html[data-theme="dark"] .home-hero p:not(.eyebrow),
+html[data-theme="dark"] .home-hero .hero-secondary,
+html[data-theme="dark"] .hero-date{color:#adc9be}
+html[data-theme="dark"] .home-hero .hero-date strong{color:#9ed5bd}
+html[data-theme="dark"] .home-hero:before,
+html[data-theme="dark"] .home-hero:after{border-color:#b8e0cb30}
+html[data-theme="dark"] .course-tabs{background:#1b272b;border-color:var(--line)}
+html[data-theme="dark"] .course-tabs button{color:#a9b9bc}
+html[data-theme="dark"] .course-tabs button.selected{background:#2a393d;color:#86d8ca;box-shadow:none}
+html[data-theme="dark"] .course-tabs button span{background:#29383c;color:#bac9cb}
+html[data-theme="dark"] .course-tabs button.selected span{background:#1c4540;color:#9de0d4}
+html[data-theme="dark"] .topbar .breadcrumb,
+html[data-theme="dark"] .topbar .connection,
+html[data-theme="dark"] .year-pill{color:#afbec0}
+html[data-theme="dark"] .year-pill{border-color:#35464a}
+html[data-theme="dark"] .connection>span{background:#67c59d}
+html[data-theme="dark"] .button.secondary{background:#223136;color:#d2dfe1;border-color:#3a4a4f}
+html[data-theme="dark"] .button.secondary:hover{background:#2b3d42}
+html[data-theme="dark"] .button.primary{background:var(--teal-dark);border-color:var(--teal-dark);color:#061b1a}
+html[data-theme="dark"] .button.primary:hover{background:#65c9bb}
+html[data-theme="dark"] .text-button,
+html[data-theme="dark"] .eyebrow{color:var(--teal)}
+html[data-theme="dark"] .icon-button{color:#b4c2c4}
+html[data-theme="dark"] .icon-button:hover{background:#ffffff14}
+html[data-theme="dark"] .theme-toggle{min-height:35px;padding:7px 10px;font-size:10px}
+html[data-theme="dark"] .theme-toggle svg{flex:none}
+html[data-theme="dark"] .theme-toggle{background:#253438;color:#e0ebec;border-color:#425459;box-shadow:0 2px 12px #0005}
+html[data-theme="dark"] .muted,
+html[data-theme="dark"] .section-heading p.muted,
+html[data-theme="dark"] .panel p.muted,
+html[data-theme="dark"] .course-overview-identity p,
+html[data-theme="dark"] .course-card p,
+html[data-theme="dark"] .course-manage-card p,
+html[data-theme="dark"] .course-calendar-note{color:var(--muted)}
+html[data-theme="dark"] label,
+html[data-theme="dark"] .toolbar label,
+html[data-theme="dark"] .period-label{color:#afbec0}
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] .toolbar input,
+html[data-theme="dark"] .toolbar select,
+html[data-theme="dark"] .data-table td input:not(.score-input),
+html[data-theme="dark"] .data-table td input:not(.score-input):focus{
+  background:#202d31;color:var(--ink);border-color:#405155
+}
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder{color:#87999d}
+html[data-theme="dark"] select option{background:#202d31;color:var(--ink)}
+html[data-theme="dark"] .data-table th{background:#202d31;color:#b2c0c2;border-color:#354449}
+html[data-theme="dark"] .data-table td{border-color:#2b393d}
+html[data-theme="dark"] .data-table tbody tr:hover{background:#1d2a2e}
+html[data-theme="dark"] .data-table tfoot td{background:#202d31;border-color:#354449;color:#c4d1d2}
+html[data-theme="dark"] .ledger-one tbody td:nth-child(1),
+html[data-theme="dark"] .ledger-one tbody td:nth-child(2),
+html[data-theme="dark"] .ledger-all tbody td:nth-child(-n+3){background:#192327}
+html[data-theme="dark"] .ledger-one tbody tr:hover td:nth-child(-n+2),
+html[data-theme="dark"] .ledger-all tbody tr:hover td:nth-child(-n+3){background:#1d2a2e}
+html[data-theme="dark"] .attendance-mark{background:#202d31;border-color:#3a4a4f;color:#aab9bc}
+html[data-theme="dark"] .mark-P.selected{background:#244333;color:#a5dfb4;border-color:#426b4f}
+html[data-theme="dark"] .mark-A.selected{background:#492c30;color:#f0aaaa;border-color:#744449}
+html[data-theme="dark"] .mark-T.selected{background:#493c24;color:#ebd18d;border-color:#796536}
+html[data-theme="dark"] .mark-E.selected{background:#283a51;color:#b4cdf1;border-color:#445c7e}
+html[data-theme="dark"] .save-bar{background:#19272bed;border-color:#36464a;box-shadow:0 6px 25px #0004}
+html[data-theme="dark"] .save-bar>span,
+html[data-theme="dark"] .save-bar small,
+html[data-theme="dark"] .footnote,
+html[data-theme="dark"] .percent-note{color:#a7b6b8}
+html[data-theme="dark"] .notice{background:#1d3532;border-color:#31544e;color:#b9d9d1}
+html[data-theme="dark"] .notice.warning{background:#3a3020;border-color:#5d4b2d;color:#e5cd96}
+html[data-theme="dark"] .notice.success{background:#1e392b;border-color:#355e43;color:#b7dfc0}
+html[data-theme="dark"] .notice.draft-notice{background:#202f3d;border-color:#3a536b;color:#c0d4e5}
+html[data-theme="dark"] .pill{background:#2a393d;color:#c2d0d2}
+html[data-theme="dark"] .pill.provisional{background:#42371f;color:#e2c785}
+html[data-theme="dark"] .pill.category-exam{background:#213b32;color:#a9d5bd}
+html[data-theme="dark"] .pill.category-sequence{background:#342d42;color:#d3c1ee}
+html[data-theme="dark"] .pill.category-notebook{background:#2b3549;color:#b9c8e8}
+html[data-theme="dark"] .pill.category-homework{background:#403321;color:#e1c28c}
+html[data-theme="dark"] .pending-label{background:#2a3437;color:#b1bec0}
+html[data-theme="dark"] .demo-banner{background:#342e21;border-color:#5a4a2b;color:#e3ce9d}
+html[data-theme="dark"] .course-manage-card{background:#1b282c;border-color:#354449}
+html[data-theme="dark"] .course-overview-icon{background:#1e3b34;color:#8ed0b1}
+html[data-theme="dark"] .course-overview-identity h3,
+html[data-theme="dark"] .course-overview-stats strong{color:var(--ink)}
+html[data-theme="dark"] .course-list-status.ready{background:#1e3b2b;color:#abdabb}
+html[data-theme="dark"] .course-list-status.pending{background:#40351f;color:#e1c88f}
+html[data-theme="dark"] .course-overview-card.is-open{border-color:#4d9f88;box-shadow:0 0 0 2px #4d9f8822}
+html[data-theme="dark"] .roster-workbook-summary h2,
+html[data-theme="dark"] .student-management-disclosure>summary strong{color:var(--ink)}
+html[data-theme="dark"] .roster-workbook-summary p:last-child,
+html[data-theme="dark"] .student-management-disclosure>summary span,
+html[data-theme="dark"] .criteria-catalog-count{color:var(--muted)}
+html[data-theme="dark"] .roster-workbook-summary:hover,
+html[data-theme="dark"] .student-management-disclosure>summary:hover{background:#202d31}
+html[data-theme="dark"] .roster-workbook-body,
+html[data-theme="dark"] .student-management-body,
+html[data-theme="dark"] .criteria-admin-workspace{border-color:var(--line)}
+html[data-theme="dark"] .sequence-saved-activities .sequence-activity-card p{color:var(--muted)}
+html[data-theme="dark"] .course-setup-panel h2,
+html[data-theme="dark"] .sequence-source-grid h3,
+html[data-theme="dark"] .course-weekly-schedule h3{color:#c5e1d7}
+html[data-theme="dark"] .course-weekly-schedule,
+html[data-theme="dark"] .course-prototype-period-activities,
+html[data-theme="dark"] .course-prototype-roster-review label{background:#202d31;border-color:#354449}
+html[data-theme="dark"] .period-tabs button,
+html[data-theme="dark"] .activity-subtabs button,
+html[data-theme="dark"] .workflow-tabs .workflow-utility,
+html[data-theme="dark"] .planning-period-selector button,
+html[data-theme="dark"] .activity-sequence-steps li{background:#202d31;border-color:#354449;color:#c2d0d2}
+html[data-theme="dark"] .period-tabs button.selected,
+html[data-theme="dark"] .activity-subtabs button.selected{background:#23423d;color:#9adacc;border-color:#3f766c}
+html[data-theme="dark"] .rubric-reference-note,
+html[data-theme="dark"] .weekly-register-note,
+html[data-theme="dark"] .monthly-register-legend{color:#acbabc}
+html[data-theme="dark"] .monthly-register-sheet{background:#192327;color:var(--ink)}
+html[data-theme="dark"] .monthly-register-top{color:#d7e4e1}
+html[data-theme="dark"] .monthly-register-ministry{color:#a8d2c5}
+html[data-theme="dark"] .monthly-register-top h2{color:#e0ece9}
+html[data-theme="dark"] .monthly-register-meta{color:#bfd1cd}
+html[data-theme="dark"] .monthly-register-fields{color:#b1c2be}
+html[data-theme="dark"] .monthly-register-legend,
+html[data-theme="dark"] .monthly-register-signature{color:#aebfbc}
+html[data-theme="dark"] .rubric-level-row td,
+html[data-theme="dark"] .rubric-level-row th{background:#192327;color:#dce7e8;border-color:#354449}
+html[data-theme="dark"] .course-prototype-shell,
+html[data-theme="dark"] .activity-flow-page{background:#101719;color:#e5edef}
+html[data-theme="dark"] :is(.course-prototype-topbar,.course-prototype-card,.course-prototype-route-card,.course-prototype-activity,.course-prototype-grade-metrics>div,.course-prototype-period-tabs button,.course-prototype-readonly-criteria>.course-prototype-criterion,.course-prototype-level,.course-prototype-grade-table,.course-prototype-roster-review label,.course-prototype-period-activities,.activity-flow-card,.activity-flow-summary-card,.activity-flow-steps button,.activity-flow-secondary,.activity-flow-add,.activity-flow-descriptor-grid>label,.criterion-editor){background:#192327;border-color:#354449;color:#dce7e8}
+html[data-theme="dark"] :is(.course-prototype-shell p,.course-prototype-shell small,.course-prototype-shell label,.course-prototype-shell td,.course-prototype-shell th,.activity-flow-page p:not(.activity-flow-eyebrow),.activity-flow-page label,.activity-flow-page small){color:#aebcbe}
+html[data-theme="dark"] :is(.course-prototype-form input,.course-prototype-add-student input,.course-prototype-test-row input,.course-prototype-test-row select,.course-prototype-activity-form input,.course-prototype-activity-form select,.course-prototype-activity-form textarea,.course-prototype-roster-review input,.course-prototype-grade-table select,.course-prototype-grade-table input,.activity-flow-form-grid input,.activity-flow-form-grid select,.activity-flow-form-grid textarea,.activity-flow-indicator-row input,.activity-flow-indicator-row select,.activity-flow-criterion-select input:not([type=checkbox]),.activity-flow-criterion-link input,.activity-flow-criterion-link select,.activity-flow-custom-criterion-top input,.activity-flow-custom-criterion-top select,.course-prototype-criterion-meta input,.course-prototype-criterion-meta select){background:#202d31;color:#e5edef;border-color:#405155}
+html[data-theme="dark"] .course-prototype-grade-table thead th,
+html[data-theme="dark"] .activity-flow-grade-table thead th{background:#202d31;color:#dce7e8}
+html[data-theme="dark"] .activity-flow-eyebrow,
+html[data-theme="dark"] .activity-flow-kicker{color:#77d0bb}
+@media(max-width:800px){.theme-toggle{top:14px;right:12px}.app-shell .topbar-right{padding-right:132px}}
+@media(max-width:600px){.theme-toggle{min-height:36px;padding:7px 9px}.theme-toggle>span{display:none}.app-shell .topbar-right{padding-right:58px}.course-summary-metrics{grid-template-columns:1fr}}
+@media(max-width:700px){.course-card{display:grid;grid-template-columns:minmax(0,1fr);align-items:stretch;gap:0;min-height:0}.course-card-top{width:100%;margin:0 0 12px}.course-card h3{margin:0 0 4px}.course-card p{display:block;margin:0;font-size:11px}.course-card-capture-actions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media print{
+  html[data-theme="dark"] body{background:#fff!important;color:#111!important}
+  html[data-theme="dark"] .monthly-register-sheet{background:#fff!important;color:#111!important}
+  html[data-theme="dark"] .monthly-register-table th,
+  html[data-theme="dark"] .monthly-register-table td{color:#111!important}
+  html[data-theme="dark"] .monthly-register-top,
+  html[data-theme="dark"] .monthly-register-top h2,
+  html[data-theme="dark"] .monthly-register-ministry,
+  html[data-theme="dark"] .monthly-register-meta,
+  html[data-theme="dark"] .monthly-register-fields,
+  html[data-theme="dark"] .monthly-register-legend,
+  html[data-theme="dark"] .monthly-register-signature{color:#111!important}
+}

@@ -22,6 +22,7 @@ async function sendRosterWorkbook(file: File, mode: "preview" | "import") {
 
 export function RosterWorkbookImportPanel({ courses, onChange }: { courses: Course[]; onChange: () => void }) {
   const fileId = useId();
+  const [importOpen, setImportOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<RosterWorkbookReview | null>(null);
   const [busy, setBusy] = useState(false);
@@ -43,7 +44,7 @@ export function RosterWorkbookImportPanel({ courses, onChange }: { courses: Cour
     try {
       const result = await sendRosterWorkbook(file, "import") as { fileName: string; result: { students: number; courses: { courseCode: string; added: number; updated: number; total: number; retained: number }[] } };
       setSuccess(`Se guardaron ${result.result.students} estudiantes en ${result.result.courses.length} cursos. La operación fue atómica; ningún registro anterior se eliminó.`);
-      setPreview(null); setFile(null); onChange();
+      setPreview(null); setFile(null); setImportOpen(false); onChange();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo guardar la nómina. No se aplicó una parte del lote."); }
     finally { setBusy(false); }
   }
@@ -53,8 +54,12 @@ export function RosterWorkbookImportPanel({ courses, onChange }: { courses: Cour
   const courseMismatch = preview && JSON.stringify(listedCodes) !== JSON.stringify(workbookCodes);
   const canImport = Boolean(preview && !courseMismatch && !preview.review.conflicts.length && preview.parsed.courses.length === courses.length);
 
-  return <section className="panel roster-workbook-import">
-    <div className="roster-workbook-heading"><div><p className="eyebrow">CARGA INICIAL DE NÓMINAS</p><h2><FileSpreadsheet size={18}/> Importar las listas del libro de Matemática</h2><p>Lee las pestañas de cada curso y guarda las listas juntas en una sola operación. El libro original no se modifica y sus macros no se ejecutan.</p></div><Upload size={20}/></div>
+  const studentCount = courses.reduce((sum, course) => sum + course.students.length, 0);
+  const incompleteCount = courses.filter(course => course.students.length === 0).length;
+
+  return <details className="panel roster-workbook-import" open={importOpen} onToggle={event => setImportOpen(event.currentTarget.open)}>
+    <summary className="roster-workbook-summary"><div><p className="eyebrow">ADMINISTRAR NÓMINAS</p><h2><FileSpreadsheet size={18}/> Importar o actualizar listas</h2><p>{courses.length} cursos · {studentCount} estudiantes cargados{incompleteCount ? ` · ${incompleteCount} listas pendientes` : ''}</p></div><span className="button secondary">{importOpen ? 'Cerrar' : 'Importar listas'}</span></summary>
+    <div className="roster-workbook-body"><p className="muted roster-workbook-note">Lee las pestañas de cada curso y guarda las listas juntas en una sola operación. El libro original no se modifica y sus macros no se ejecutan.</p>
     <div className="roster-workbook-controls"><label htmlFor={fileId}>Libro Excel (.xlsx o .xlsm)<input id={fileId} type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" disabled={busy} onChange={event => { setFile(event.target.files?.[0] ?? null); setPreview(null); setError(""); setSuccess(""); }}/></label><button type="button" className="button secondary" onClick={() => void analyze()} disabled={busy || !file}>{busy ? <LoaderCircle className="spin" size={16}/> : <FileSpreadsheet size={16}/>} Analizar libro</button></div>
     <p className="muted roster-workbook-note">La pestaña debe llamarse igual que el código del curso y contener encabezados de número/ID y estudiante/nombre. El número organiza la lista; la app crea una identidad interna a partir del nombre para que cambiar el orden no mueva su historial. Los alumnos no incluidos nunca se borran.</p>
     {error && <div className="notice warning" role="alert">{error}</div>}
@@ -69,7 +74,8 @@ export function RosterWorkbookImportPanel({ courses, onChange }: { courses: Cour
       })}</div>
       <div className="toolbar roster-workbook-actions"><button type="button" className="button primary" disabled={busy || !canImport} onClick={() => void importAll()}>{busy ? <LoaderCircle className="spin" size={16}/> : <Check size={16}/>} Guardar nóminas de todos los cursos</button><button type="button" className="button secondary" disabled={busy} onClick={() => { setPreview(null); setFile(null); }}>Descartar revisión</button></div>
     </div>}
-  </section>;
+    </div>
+  </details>;
 }
 
 type ParsedRoster = { rows: RosterRow[]; errors: string[] };
@@ -146,6 +152,7 @@ export default function StudentPanel({ course, onChange, onOpenAttendance, onOpe
   const [number, setNumber] = useState("");
   const [name, setName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [manageOpen, setManageOpen] = useState(course.students.length === 0);
   const courseRef = useRef(course.id); courseRef.current = course.id;
   const fileId = useId(), externalIdInput = useId(), numberInput = useId(), nameInput = useId();
   const students = useMemo(() => [...course.students].sort((a, b) => a.number - b.number || a.id.localeCompare(b.id)), [course.students]);
@@ -153,7 +160,7 @@ export default function StudentPanel({ course, onChange, onOpenAttendance, onOpe
   const existingIds = useMemo(() => new Set(course.students.map(student => student.externalId)), [course.students]);
   const newRows = parsed?.rows.filter(row => !existingIds.has(row.externalId)).length ?? 0;
 
-  useEffect(() => { setParsed(null); setError(""); setSuccess(""); setExternalId(""); setNumber(""); setName(""); setEditingId(null); }, [course.id]);
+  useEffect(() => { setParsed(null); setError(""); setSuccess(""); setExternalId(""); setNumber(""); setName(""); setEditingId(null); setManageOpen(course.students.length === 0); }, [course.id]);
 
   async function readFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -185,9 +192,12 @@ export default function StudentPanel({ course, onChange, onOpenAttendance, onOpe
 
   return <section aria-labelledby="students-title">
     <div className="section-heading"><div><p className="eyebrow">Lista e identidad</p><h2 id="students-title">Estudiantes de {course.code}</h2><p className="muted">{students.length} estudiantes. Esta lista alimenta los registros del curso de asistencia, comportamiento y calificaciones.</p></div><div className="toolbar"><button className="button secondary" type="button" onClick={() => downloadJson(`lista-${course.code}.json`, students.map(student => ({ id: student.externalId, numero: student.number, nombre: student.name })))}>Descargar lista</button><button className="button secondary" type="button" disabled={!students.some(student=>student.active)} onClick={onOpenAttendance}><CalendarCheck2 size={16}/> Asistencia</button><button className="button primary" type="button" disabled={!students.some(student=>student.active)} onClick={onOpenBehavior}><Activity size={16}/> Comportamiento</button></div></div>
+    <div className="metrics compact student-course-summary"><div className="metric"><span>Estudiantes en la lista</span><strong>{students.length}</strong></div><div className="metric"><span>Activos</span><strong>{students.filter(student => student.active).length}</strong></div><div className="metric"><span>Inactivos</span><strong>{students.filter(student => !student.active).length}</strong></div></div>
     {error && <div className="notice error" role="alert">{error}</div>}
     {success && <div className="notice success" role="status">{success}</div>}
-    <div className="panel">
+    <details className="panel student-management-disclosure" open={manageOpen} onToggle={event => setManageOpen(event.currentTarget.open)}>
+      <summary><strong>Administrar matrícula de {course.code}</strong><span>{students.length ? 'Importar, añadir o editar estudiantes' : 'Agrega la lista para iniciar los registros'}</span></summary>
+      <div className="student-management-body"><div className="panel">
       <h3>Importar o actualizar desde CSV</h3><p>Encabezados: <code>id,numero,nombre</code>. Usa el mismo ID de origen al actualizar un nombre o número de lista.</p><p className="muted">La importación añade o actualiza estudiantes. Los alumnos que no aparezcan en el CSV conservan sus datos.</p>
       <div className="field"><label htmlFor={fileId}>Archivo CSV UTF-8</label><input key={course.id} id={fileId} type="file" accept=".csv,text/csv" onChange={readFile} disabled={busy} /></div>
       {parsed && <div>
@@ -201,7 +211,8 @@ export default function StudentPanel({ course, onChange, onOpenAttendance, onOpe
       <div className="field"><label htmlFor={externalIdInput}>ID de origen estable</label><input id={externalIdInput} value={externalId} onChange={event => setExternalId(event.target.value)} required maxLength={100} autoComplete="off" placeholder="Ejemplo: alumno-022" disabled={busy} readOnly={editingId !== null} /></div>
       <div className="field"><label htmlFor={numberInput}>Número de lista</label><input id={numberInput} type="number" min={1} max={9999} step={1} value={number} onChange={event => setNumber(event.target.value)} required disabled={busy} /></div>
       <div className="field"><label htmlFor={nameInput}>Nombre completo</label><input id={nameInput} value={name} onChange={event => setName(event.target.value)} required maxLength={180} autoComplete="off" disabled={busy} /></div>
-    </div><div className="toolbar"><button className="button primary" type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar estudiante"}</button>{editingId && <button className="button secondary" type="button" disabled={busy} onClick={() => { setEditingId(null); setExternalId(""); setNumber(""); setName(""); }}>Cancelar edición</button>}</div></form><p className="muted">Si reutilizas un ID existente, se actualizará ese estudiante conservando su identidad y sus registros.</p></div>
-    <div className="panel"><h3>Lista actual</h3><div className="table-wrap"><table className="data-table"><caption>Estudiantes vinculados a {course.code}</caption><thead><tr><th>Número</th><th>Nombre</th><th>ID de origen</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{students.length ? students.map(student => <tr key={student.id}><td>{student.number}</td><td>{student.name}</td><td>{student.externalId}</td><td><span className="pill">{student.active ? "Activo" : "Inactivo"}</span></td><td><button type="button" className="button secondary" disabled={busy} onClick={() => { setEditingId(student.id); setExternalId(student.externalId); setNumber(String(student.number)); setName(student.name); setError(""); setSuccess(""); document.getElementById(nameInput)?.focus(); }}>Editar</button></td></tr>) : <tr><td colSpan={5}>Todavía no hay estudiantes. Importa la lista o añade el primero.</td></tr>}</tbody></table></div></div>
+    </div><div className="toolbar"><button className="button primary" type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar estudiante"}</button>{editingId && <button className="button secondary" type="button" disabled={busy} onClick={() => { setEditingId(null); setExternalId(""); setNumber(""); setName(""); }}>Cancelar edición</button>}</div></form><p className="muted">Si reutilizas un ID existente, se actualizará ese estudiante conservando su identidad y sus registros.</p></div></div>
+    <div className="panel student-roster-summary"><h3>Lista actual</h3><div className="table-wrap"><table className="data-table"><caption>Estudiantes vinculados a {course.code}</caption><thead><tr><th>Número</th><th>Nombre</th><th>ID de origen</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{students.length ? students.map(student => <tr key={student.id}><td>{student.number}</td><td>{student.name}</td><td>{student.externalId}</td><td><span className="pill">{student.active ? "Activo" : "Inactivo"}</span></td><td><button type="button" className="button secondary" disabled={busy} onClick={() => { setManageOpen(true); setEditingId(student.id); setExternalId(student.externalId); setNumber(String(student.number)); setName(student.name); setError(""); setSuccess(""); document.getElementById(nameInput)?.focus(); }}>Editar</button></td></tr>) : <tr><td colSpan={5}>Todavía no hay estudiantes. Abre «Administrar matrícula» para añadirlos.</td></tr>}</tbody></table></div></div>
+    </details>
   </section>;
 }
