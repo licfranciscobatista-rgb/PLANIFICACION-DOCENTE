@@ -206,10 +206,10 @@ function GradeCapture({initial,course}:{initial:GradesView;course:Course}){
       <fieldset disabled={saving} className="bare-fieldset">
         <div className="table-wrap">
           <table className="data-table grade-capture-table">
-            <thead><tr><th>N.º</th><th>Estudiante</th>{activity.scoringMode==='rubric'&&activity.rubric.map(c=><th key={c.id}><span>{c.label}</span><small className="cell-description">{COMPETENCY_GROUPS.find(g=>g.key===c.competency)?.label??c.indicator??''}</small></th>)}<th>Nota final / {activity.maxPoints}</th><th>Porcentaje</th><th>Comentario</th></tr></thead>
+            <thead><tr><th>N.º</th><th>Estudiante</th>{activity.scoringMode==='rubric'&&activity.rubric.map(c=><th key={c.id}><span>{c.label}</span><small className="cell-description">{COMPETENCY_GROUPS.find(g=>g.key===c.competency)?.label??c.indicator??''}</small><details className="grade-criterion-help"><summary>Ver niveles</summary><div>{c.levels.map((item,index)=><p key={`${item.label}-${index}`}><strong>{item.label} · {item.points}</strong>{item.description&&<span>{item.description}</span>}</p>)}</div></details></th>)}<th>Nota final / {activity.maxPoints}</th><th>Porcentaje</th><th>Comentario</th></tr></thead>
             <tbody>{draft.value.filter(r=>(r.name+' '+r.number).toLowerCase().includes(search.toLowerCase())).map(r=><tr key={r.studentId}>
               <td className="row-number">{String(r.number).padStart(2,'0')}</td><td className="student-name">{r.name}</td>
-              {activity.scoringMode==='rubric'&&activity.rubric.map(c=>{const selected=r.criterionLevels?.[c.id];return <td key={c.id}><select aria-label={c.label+' '+r.name} value={selected??''} onChange={e=>level(r.studentId,c.id,e.target.value)}><option value="">Pendiente</option>{c.levels.map((l,i)=><option key={i} value={i}>{l.label+' ('+l.points+')'}</option>)}</select></td>})}
+              {activity.scoringMode==='rubric'&&activity.rubric.map(c=>{const selected=r.criterionLevels?.[c.id];return <td key={c.id}><select aria-label={c.label+' '+r.name} value={selected??''} onChange={e=>level(r.studentId,c.id,e.target.value)}><option value="">Pendiente</option>{c.levels.map((l,i)=><option key={i} value={i}>{l.label+' ('+l.points+')'}</option>)}</select>{selected!==undefined&&c.levels[selected]?.description&&<small className="selected-level-descriptor">{c.levels[selected].description}</small>}</td>})}
               <td>{activity.scoringMode==='points'?<input className="score-input" type="number" min={0} max={activity.maxPoints} step={0.01} value={r.score??''} aria-label={'Nota '+r.name} onChange={e=>row(r.studentId,{score:e.target.value===''?null:Number(e.target.value)})}/>:<strong>{r.score===null?'Pendiente':r.score.toFixed(2)}</strong>}</td>
               <td>{r.score===null?<span className="pending-label">Pendiente</span>:Math.round(r.score/activity.maxPoints*100)+'%'}</td>
               <td><input aria-label={'Comentario '+r.name} maxLength={500} placeholder="Opcional" value={r.comment} onChange={e=>row(r.studentId,{comment:e.target.value})}/></td>
@@ -226,27 +226,32 @@ function GradeCapture({initial,course}:{initial:GradesView;course:Course}){
 function RubricReference({activity,course}:{activity:Activity;course:Course}){
   const order=(activity.rubric[0]?.levels.map((_,index)=>index)??[]).reverse();
   return <section className="panel rubric-reference" aria-label="Matriz completa de criterios y descriptores">
-    <div className="rubric-reference-heading">
-      <div><p className="eyebrow">MATRIZ DE EVALUACIÓN · {activity.period}</p><h2>{activity.title}</h2><p>{activity.evidence||activity.description||activity.purpose||'Descriptores usados para valorar cada criterio.'}</p></div>
-      <strong className="rubric-final-value">{activity.maxPoints}<small> puntos finales</small></strong>
-    </div>
-    <div className="rubric-metadata">
-      <div><span>Área</span><strong>Matemática</strong></div>
-      <div><span>Curso</span><strong>{course.code}</strong></div>
-      <div><span>Creada</span><strong>{activity.date}</strong></div>
-      <div><span>Tema / secuencia</span><strong>{activity.sequenceCode||activity.period}</strong></div>
-      <div><span>Instrumento</span><strong>{activity.instrument||'Rúbrica analítica'}</strong></div>
-    </div>
-    <div className="table-wrap rubric-matrix-wrap">
-      <table className="data-table rubric-matrix-table">
-        <thead><tr><th>Nivel de desempeño</th>{activity.rubric.map(c=><th key={c.id}><strong>{c.label}</strong><small>{COMPETENCY_GROUPS.find(g=>g.key===c.competency)?.label??c.competency??'Competencia pendiente'}</small>{c.indicator&&<small>Indicador: {c.indicator}</small>}<small>Peso {c.weight??1} · máximo {Math.max(...c.levels.map(l=>l.points))*(c.weight??1)}</small></th>)}</tr></thead>
-        <tbody>{order.map(levelIndex=><tr key={levelIndex} className={'rubric-level-row rubric-level-'+levelIndex}>
-          <th scope="row"><span>{activity.rubric[0]?.levels[levelIndex]?.label??'Nivel'}</span><small>{activity.rubric[0]?.levels[levelIndex]?.points??''} pts base</small></th>
-          {activity.rubric.map(c=>{const level=c.levels[levelIndex];return <td key={c.id}><div className="rubric-descriptor-label">{level?.label} <span>{level?.points} pts × {c.weight??1}</span></div><p>{level?.description||'Sin descriptor definido.'}</p></td>;})}
-        </tr>)}</tbody>
-      </table>
-    </div>
-    <p className="rubric-reference-note">Selecciona un nivel por criterio para cada estudiante. La nota final se convierte proporcionalmente al máximo de {activity.maxPoints} puntos y queda pendiente hasta completar todos los criterios.</p>
+    <details className="rubric-reference-details">
+      <summary><span>Consultar matriz completa y descriptores</span><small>{activity.rubric.length} criterios · {activity.maxPoints} puntos</small></summary>
+      <div className="rubric-reference-content">
+        <div className="rubric-reference-heading">
+          <div><p className="eyebrow">MATRIZ DE EVALUACIÓN · {activity.period}</p><h2>{activity.title}</h2><p>{activity.description||activity.evidence||activity.purpose||'Descriptores usados para valorar cada criterio.'}</p></div>
+          <strong className="rubric-final-value">{activity.maxPoints}<small> puntos finales</small></strong>
+        </div>
+        <div className="rubric-metadata">
+          <div><span>Área</span><strong>Matemática</strong></div>
+          <div><span>Curso</span><strong>{course.code}</strong></div>
+          <div><span>Fecha</span><strong>{activity.date}</strong></div>
+          <div><span>Tema / secuencia</span><strong>{activity.sequenceCode||activity.period}</strong></div>
+          <div><span>Instrumento</span><strong>{activity.instrument||'Rúbrica analítica'}</strong></div>
+        </div>
+        <div className="table-wrap rubric-matrix-wrap">
+          <table className="data-table rubric-matrix-table">
+            <thead><tr><th>Nivel de desempeño</th>{activity.rubric.map(c=><th key={c.id}><strong>{c.label}</strong><small>{COMPETENCY_GROUPS.find(g=>g.key===c.competency)?.label??c.competency??'Competencia pendiente'}</small>{c.indicator&&<small>Indicador: {c.indicator}</small>}<small>Peso {c.weight??1} · máximo {Math.max(...c.levels.map(l=>l.points))*(c.weight??1)}</small></th>)}</tr></thead>
+            <tbody>{order.map(levelIndex=><tr key={levelIndex} className={'rubric-level-row rubric-level-'+levelIndex}>
+              <th scope="row"><span>{activity.rubric[0]?.levels[levelIndex]?.label??'Nivel'}</span><small>{activity.rubric[0]?.levels[levelIndex]?.points??''} pts base</small></th>
+              {activity.rubric.map(c=>{const level=c.levels[levelIndex];return <td key={c.id}><div className="rubric-descriptor-label">{level?.label} <span>{level?.points} pts × {c.weight??1}</span></div><p>{level?.description||'Sin descriptor definido.'}</p></td>;})}
+            </tr>)}</tbody>
+          </table>
+        </div>
+        <p className="rubric-reference-note">Selecciona un nivel por criterio para cada estudiante. La nota final se convierte proporcionalmente al máximo de {activity.maxPoints} puntos y queda pendiente hasta completar todos los criterios.</p>
+      </div>
+    </details>
   </section>;
 }
 
