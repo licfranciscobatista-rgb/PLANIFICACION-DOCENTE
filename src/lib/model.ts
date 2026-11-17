@@ -19,6 +19,10 @@ export type LessonType = "teoria" | "practica" | "ejercicios" | "repaso" | "corr
 export type EvaluationPurpose = "diagnostica" | "formativa" | "sumativa" | "formativa_sumativa";
 export type SessionStatus = "programada" | "no_impartida" | "impartida" | "no_programada";
 export interface Student { id: string; courseId: string; externalId: string; number: number; name: string; active: boolean }
+export interface PeriodSheetColumn { id:string; label:string; maxPoints:number; date:string|null }
+export interface PeriodSheetPlan { period:string; revision:number; enabled:boolean; columns:PeriodSheetColumn[] }
+export interface PeriodSheetResult { columns:PeriodSheetColumn[]; scores:Record<string,number|null>; plannedPoints:number; pending:number; accumulated:number|null; total:number|null }
+export interface PeriodSheetView { plan:PeriodSheetPlan; courseId:string; rows:{student:Student; result:PeriodSheetResult}[] }
 export interface Course { id: string; code: string; name: string; students: Student[] }
 export interface Category { key: CategoryKey; label: string; group?: string; weight: number; expectedRaw: number | null; dailyMax: number | null; targetSessions: number | null; competency: CompetencyKey | null }
 export interface SequenceIndicator { id: string; code: string; label: string; competency: CompetencyKey | null }
@@ -79,6 +83,7 @@ export interface TeacherLedgerScore {
  comment?: string;
 }
 export interface TeacherLedgerSummary {
+ directPlan?:PeriodSheetPlan;
  period: string;
  availablePeriods: string[];
  categories: Pick<CategoryReport,"key"|"label"|"group"|"weight"|"expectedRaw">[];
@@ -86,6 +91,6 @@ export interface TeacherLedgerSummary {
  rows: { course: Pick<Course,"id"|"code"|"name">; student: Student; categories: CategoryReport[]; scores: TeacherLedgerScore[]; rawTotal: number; rawPossible: number; bonusPoints: number; bonusPossible: number; weightedTotal: number | null; finalized: boolean; observations: string[] }[];
  note: string;
 }
-export interface StudentReport { student: Student; course: { id: string; code: string; name: string }; plan: EvaluationPlan; attendance: { present: number; absent: number; late: number; excused: number; pending: number; sessions: number; percent: number | null }; categories: CategoryReport[]; competencies: CompetencyScore[]; bonusPoints: number; bonusPossible: number; total: number | null; provisionalTotal: number | null; grades: (GradeRow & { activityId: string; title: string; date: string; category: ActivityCategoryKey; maxPoints: number; included: boolean; rubric: RubricCriterion[]; indicatorPoints: ActivityIndicatorPoint[]; scoringMode: 'points'|'rubric'; competency: CompetencyKey | null; sequenceCode: string; sequenceActivityId?: string | null; sequencePlannedPeriod?: string | null; evidence: string; instrument: string; purpose: string })[]; timeline: { date: string; block: number; status: AttendanceMark; behavior: number | null; comment: string; sessionStatus: SessionStatus }[]; notices: string[] }
+export interface StudentReport { directEvaluation?:PeriodSheetResult; student: Student; course: { id: string; code: string; name: string }; plan: EvaluationPlan; attendance: { present: number; absent: number; late: number; excused: number; pending: number; sessions: number; percent: number | null }; categories: CategoryReport[]; competencies: CompetencyScore[]; bonusPoints: number; bonusPossible: number; total: number | null; provisionalTotal: number | null; grades: (GradeRow & { activityId: string; title: string; date: string; category: ActivityCategoryKey; maxPoints: number; included: boolean; rubric: RubricCriterion[]; indicatorPoints: ActivityIndicatorPoint[]; scoringMode: 'points'|'rubric'; competency: CompetencyKey | null; sequenceCode: string; sequenceActivityId?: string | null; sequencePlannedPeriod?: string | null; evidence: string; instrument: string; purpose: string })[]; timeline: { date: string; block: number; status: AttendanceMark; behavior: number | null; comment: string; sessionStatus: SessionStatus }[]; notices: string[] }
 export interface ServiceOptions { demo?: boolean; seedDemoRoster?: boolean; today?: () => string; demoNote?: string }
 export class AppError extends Error { constructor(public status: number, message: string, public code = "VALIDATION") { super(message); this.name = "AppError"; } }
