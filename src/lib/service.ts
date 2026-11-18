@@ -580,9 +580,9 @@ export class RegistroService {
     if(!planned.competency)throw new AppError(400,`Asigna una competencia al indicador “${planned.code||planned.label}” antes de calificar actividades.`);
     allocationTotal+=item.points;return {indicatorId:planned.id,code:planned.code,label:planned.label,competency:planned.competency,points:round(item.points)};
    });
-   if(!allocations.length)throw new AppError(400,"Asigna al menos un indicador a la actividad.");
+   if(value.scoringMode==="rubric"&&!allocations.length)throw new AppError(400,"Selecciona al menos un indicador para la rúbrica.");
    if(linkedSequenceActivity?.indicatorIds.length&&allocations.some(item=>!linkedSequenceActivity.indicatorIds.includes(item.indicatorId)))throw new AppError(400,"La actividad solo puede recibir puntos de indicadores vinculados a su clase de la secuencia.");
-   if(round(allocationTotal)!==round(current.maxPoints))throw new AppError(400,`Los puntos asignados a indicadores deben sumar ${current.maxPoints}; ahora suman ${round(allocationTotal)}.`);
+   if(allocations.length&&round(allocationTotal)!==round(current.maxPoints))throw new AppError(400,`Los puntos asignados a indicadores deben sumar ${current.maxPoints}; ahora suman ${round(allocationTotal)}.`);
    let rubric:RubricCriterion[]=[];let catalog=new Map<string,EvaluationCriterion>();
    if(value.scoringMode==="rubric"){
     if(!value.rubric.length)throw new AppError(400,"Selecciona al menos un criterio para valorar la actividad.");
@@ -846,7 +846,7 @@ export class RegistroService {
    const before = await this.gradesView(ownerId, v.activityId, tx), a = before.activity; this.validateStudents(v.rows, await this.roster(ownerId, a.courseId, tx));
    const periodPlan=await this.planForPeriod(ownerId,a.period,tx);
     const reviewedSequence=await this.curriculumSequence(ownerId,tx)??periodPlan.sequence;
-    if(a.category!=="notebook"&&a.category!=="participation"&&reviewedSequence?.reviewed&&reviewedSequence.indicators.length&&!a.indicatorPoints.length)throw new AppError(409,"Esta actividad todavía no está distribuida por indicador. Configura la valoración antes de guardar calificaciones.","EVALUATION_NOT_CONFIGURED");
+   if(a.scoringMode==="rubric"&&a.category!=="notebook"&&a.category!=="participation"&&reviewedSequence?.reviewed&&reviewedSequence.indicators.length&&!a.indicatorPoints.length)throw new AppError(409,"Esta actividad todavía no está distribuida por indicador. Configura la rúbrica antes de guardar calificaciones.","EVALUATION_NOT_CONFIGURED");
    const normalized = v.rows.map(r => { let score = r.score; const levels = r.criterionLevels ?? null; if (a.scoringMode === "rubric") { if (levels) { for(const [criterionId,index] of Object.entries(levels)){const criterion=a.rubric.find(item=>item.id===criterionId);if(!criterion)throw new AppError(400,"La selección contiene un criterio que no pertenece a la rúbrica.");if(!Number.isInteger(index)||index<0||index>=criterion.levels.length)throw new AppError(400,`El nivel elegido para “${criterion.label}” no existe.`);} if(Object.keys(levels).length===a.rubric.length)rubricScore(a.rubric,levels); score = Object.keys(levels).length === a.rubric.length ? a.indicatorPoints.length ? allocatedRubricScore(a.rubric,levels,a.indicatorPoints) : round(rubricScore(a.rubric, levels) / rubricMaximum(a.rubric) * a.maxPoints) : null; } else if (score !== null) throw new AppError(400, "La rúbrica necesita un nivel seleccionado para cada criterio."); } else if (levels) throw new AppError(400, "La actividad utiliza puntos directos, no niveles."); if (score !== null && score > a.maxPoints) throw new AppError(400, `La nota no puede superar ${a.maxPoints}.`); return { ...r, score, levels }; });
    for (const r of normalized) {
     await tx.query("INSERT INTO grades(owner_id,course_id,activity_id,student_id,score,criterion_levels,comment) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7) ON CONFLICT(activity_id,student_id) DO UPDATE SET score=EXCLUDED.score,criterion_levels=EXCLUDED.criterion_levels,comment=EXCLUDED.comment,updated_at=now()", [ownerId, a.courseId, a.id, r.studentId, r.score, JSON.stringify(r.levels), r.comment ?? ""]);
