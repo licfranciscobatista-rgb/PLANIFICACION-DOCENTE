@@ -12,3 +12,4 @@ tmp/
 test-results/
 playwright-report/
 *.tsbuildinfo
+/AGENTS.md
