@@ -27,6 +27,7 @@ export async function GET(req:NextRequest) {
       case 'bootstrap': data=await service.bootstrap(owner); break;
       case 'attendance': data=await service.attendance(owner,q.get('courseId')||'',q.get('date')||'',Number(q.get('block')||1)); break;
       case 'register-summary': data=await service.registerSummary(owner,q.get('courseId')||''); break;
+      case 'attendance-imports': data=await service.attendanceImports(owner); break;
       case 'attendance-register-pdf': {
         const courseId=q.get('courseId')||'';
         if(!courseId) throw new AppError(400,'Selecciona un curso para descargar su registro.');

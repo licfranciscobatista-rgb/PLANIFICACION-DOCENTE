@@ -2,8 +2,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Save, Search, AlertCircle, LoaderCircle, Download, RotateCcw } from 'lucide-react';
 import { COMPETENCY_GROUPS } from '@/lib/model';
-import type { Activity, AttendanceMark, AttendanceView, Course, CourseRegisterSummary, GradesView, LessonType, SaveReceipt } from '@/lib/model';
+import type { Activity, AttendanceMark, AttendanceView, ClassLessonType, Course, CourseRegisterSummary, GradesView, LessonType, SaveReceipt } from '@/lib/model';
 import { apiPost, downloadJson, errorText, useRemote } from '@/lib/client';
+import { AttendanceWorkbookImportPanel } from './attendance-workbook-import';
 
 const marks:[AttendanceMark,string][]=[['P','Presente'],['A','Ausente'],['T','Tardanza'],['E','Excusa'],['R','Retiro voluntario']];
 function Loader({error}:{error?:string}) {return error?<div className="notice warning" role="alert">{error}</div>:<div className="loading-state"><LoaderCircle className="spin"/> Cargando registros…</div>;}
@@ -41,7 +42,7 @@ export function AttendancePanel({course,today,date,onDateChange,block,onBlockCha
   return <><div className="section-heading"><div><p className="eyebrow">REGISTRO DIARIO · {course.code}</p><h1>Registro de la clase</h1><p className="muted">Toma la asistencia y, en el mismo bloque, registra participación y comportamiento.</p></div><div className="toolbar"><label>Fecha<input type="date" min="2026-10-20" value={date||today} onChange={e=>e.target.value&&onDateChange(e.target.value)}/></label><label>Bloque<select value={block} onChange={e=>onBlockChange(Number(e.target.value))}><option value={1}>Bloque 1</option><option value={2}>Bloque 2</option><option value={3}>Bloque 3</option><option value={4}>Bloque 4</option><option value={5}>Bloque 5</option><option value={6}>Bloque 6</option><option value={7}>Bloque 7</option><option value={8}>Bloque 8</option></select></label></div></div>
   {remote.data?<AttendanceCapture key={course.id+date+block+remote.data.session.revision} initial={remote.data} courseCode={course.code} today={today} onReload={remote.reload} mode="attendance"/>:<Loader error={remote.error}/>}</>;
 }
-export function AttendanceSummaryPanel({course,demo,section}:{course:Course;demo:boolean;section:'month'|'week'}){
+export function AttendanceSummaryPanel({course,courses,demo,section}:{course:Course;courses:Course[];demo:boolean;section:'month'|'week'}){
   const [weekStart,setWeekStart]=useState('');
   const [monthKey,setMonthKey]=useState('');
   const remote=useRemote<CourseRegisterSummary>('register-summary',{courseId:course.id});
@@ -77,6 +78,7 @@ export function AttendanceSummaryPanel({course,demo,section}:{course:Course;demo
         <p className="monthly-register-signature">Firma del docente: ___________________________________________ <span>Fecha: __________________</span></p>
       </>:<div className="empty-state">No hay sesiones impartidas para imprimir en este curso.</div>}
     </section>}
+    {section==='month'&&<AttendanceWorkbookImportPanel course={course} courses={courses} onChange={remote.reload}/>}
     {section==='week'&&<>
       <section className="panel weekly-summary-panel" aria-labelledby="weekly-register-title">
         <div className="weekly-register-heading"><div><p className="eyebrow">ASISTENCIA POR ESTUDIANTE</p><h2 id="weekly-register-title">Veces que asistió cada semana</h2><p>Cada celda muestra presentes o tardanzas sobre las clases impartidas esa semana.</p></div></div>
@@ -145,7 +147,7 @@ function AttendanceCapture({initial,courseCode,today,onReload,mode}:{initial:Att
   </div>
   <DraftNotice dirty={activeDraft.dirty} stale={activeDraft.stale} onDiscard={activeDraft.discard} onExport={()=>downloadJson(captureMode==='attendance'?'borrador-asistencia.json':'borrador-valoracion-diaria.json',activeDraft.value)}/>
   {captureMode==='attendance'?<>
-    <section className="panel"><fieldset disabled={saving} className="bare-fieldset"><div className="form-grid session-fields"><label>Tipo de clase<select value={attendanceDraft.value.lessonType} onChange={e=>attendanceDraft.set({...attendanceDraft.value,lessonType:e.target.value as LessonType})}><option value="teoria">Teórica</option><option value="practica">Práctica</option><option value="ejercicios">Ejercicios</option><option value="repaso">Repaso</option><option value="correcciones">Correcciones</option><option value="actividad_escolar">Actividad escolar</option></select></label><label>Tema trabajado<input placeholder="Tema o actividad del día" maxLength={200} value={attendanceDraft.value.topic} onChange={e=>attendanceDraft.set({...attendanceDraft.value,topic:e.target.value})}/></label><label>Observación de la clase<input placeholder="Opcional" maxLength={1000} value={attendanceDraft.value.notes} onChange={e=>attendanceDraft.set({...attendanceDraft.value,notes:e.target.value})}/></label></div>
+    <section className="panel"><fieldset disabled={saving} className="bare-fieldset"><div className="form-grid session-fields"><label>Tipo de clase<select value={attendanceDraft.value.lessonType} onChange={e=>attendanceDraft.set({...attendanceDraft.value,lessonType:e.target.value as ClassLessonType})}>{initial.session.lessonType==='importada'&&<option value="importada">Tipo no especificado · importado</option>}<option value="teoria">Teórica</option><option value="practica">Práctica</option><option value="ejercicios">Ejercicios</option><option value="repaso">Repaso</option><option value="correcciones">Correcciones</option><option value="actividad_escolar">Actividad escolar</option></select></label><label>Tema trabajado<input placeholder="Tema o actividad del día" maxLength={200} value={attendanceDraft.value.topic} onChange={e=>attendanceDraft.set({...attendanceDraft.value,topic:e.target.value})}/></label><label>Observación de la clase<input placeholder="Opcional" maxLength={1000} value={attendanceDraft.value.notes} onChange={e=>attendanceDraft.set({...attendanceDraft.value,notes:e.target.value})}/></label></div>
     <div className="table-toolbar"><div className="search-field"><Search size={17}/><input aria-label="Buscar estudiante" placeholder="Buscar estudiante…" value={search} onChange={e=>setSearch(e.target.value)}/></div><button type="button" className="button secondary" disabled={future} onClick={()=>attendanceDraft.set({...attendanceDraft.value,rows:attendanceDraft.value.rows.map(r=>({...r,status:'P'}))})}><Check size={16}/> Todos presentes</button></div>
     <div className="table-wrap"><table className="data-table attendance-table"><thead><tr><th>N.º</th><th>Estudiante</th><th>Asistencia</th></tr></thead><tbody>{rows.map(r=><tr key={r.studentId}><td className="row-number">{String(r.number).padStart(2,'0')}</td><td className="student-name">{r.name}</td><td><div className="attendance-marks">{marks.map(([m,label])=><button type="button" aria-label={label+' '+r.name} aria-pressed={r.status===m} title={label} disabled={future} key={m} className={'attendance-mark mark-'+m+(r.status===m?' selected':'')} onClick={()=>attendanceRow(r.studentId,r.status===m?{status:null}:{status:m})}>{m}</button>)}</div></td></tr>)}</tbody></table>{!rows.length&&<div className="empty-state">No hay estudiantes que coincidan con la búsqueda.</div>}</div>
     </fieldset></section>

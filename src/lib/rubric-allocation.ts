@@ -8,9 +8,10 @@ type IndicatorOption = {
 };
 
 /**
- * Distributes an activity's maximum proportionally to the rubric weight
- * attached to each indicator. With equal 1–4 criteria, this is equivalent to
- * the workbook formula: sum(levels) / (criteria × 4) × activity maximum.
+ * Each criterion's maximum is max(level points) × weight. The activity editor
+ * stores a teacher-entered point value in that weight, so indicator totals are
+ * the sum of the values assigned to their criteria. Those indicator totals
+ * add up to the activity maximum and feed the shared grade ledger.
  */
 export function allocateRubricPoints(
   rubric: Pick<RubricCriterion, 'indicatorId' | 'levels' | 'weight'>[],

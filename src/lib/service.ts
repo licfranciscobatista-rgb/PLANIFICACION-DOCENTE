@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { DBAdapter } from "./db";
-import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, DailyAssessmentInput, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, IndicatorUsageRecord, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan } from "./model";
+import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceImportEntry, AttendanceImportRecord, AttendanceImportReceipt, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, DailyAssessmentInput, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, IndicatorUsageRecord, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan } from "./model";
 import { payloadHash, plan, requireDate, round, rubricMaximum, rubricScore, sessionStatus, todayInSchool } from "./engine";
 import classCalendar from "./data/class-schedule-2026-27.json";
 import { readPeriodSheet, periodSheetResult, studentPeriodSheet, savePeriodSheetPlan, savePeriodSheetGrades } from './period-sheet';
@@ -9,7 +9,7 @@ import { readPeriodSheet, periodSheetResult, studentPeriodSheet, savePeriodSheet
 type Row = Record<string, unknown>;
 const uid = z.string().uuid();
 const text = z.string().max(4000);
-const attendanceSchema = z.object({ requestId: z.string().min(1).max(200), courseId: uid, date: z.string(), block: z.number().int().min(1).max(12), revision: z.number().int().min(0), lessonType: z.enum(["teoria", "practica", "ejercicios", "repaso", "correcciones", "actividad_escolar"]), topic: text.optional(), notes: text.optional(), rows: z.array(z.object({ studentId: uid, status: z.enum(["P", "A", "T", "E", "R"]).nullable(), behavior: z.number().finite().min(0).max(10000).nullable().optional(), discipline: z.number().finite().min(0).max(10000).nullable().optional(), participation: z.number().finite().min(0).max(10000).nullable().optional(), dailyAssessmentRequired:z.boolean().optional(), comment: text.optional() })).max(1000) });
+const attendanceSchema = z.object({ requestId: z.string().min(1).max(200), courseId: uid, date: z.string(), block: z.number().int().min(1).max(12), revision: z.number().int().min(0), lessonType: z.enum(["teoria", "practica", "ejercicios", "repaso", "correcciones", "actividad_escolar", "importada"]), topic: text.optional(), notes: text.optional(), rows: z.array(z.object({ studentId: uid, status: z.enum(["P", "A", "T", "E", "R"]).nullable(), behavior: z.number().finite().min(0).max(10000).nullable().optional(), discipline: z.number().finite().min(0).max(10000).nullable().optional(), participation: z.number().finite().min(0).max(10000).nullable().optional(), dailyAssessmentRequired:z.boolean().optional(), comment: text.optional() })).max(1000) });
 const dailyAssessmentSchema = z.object({ requestId:z.string().min(1).max(200),courseId:uid,date:z.string(),block:z.number().int().min(1).max(12),revision:z.number().int().min(0),assessmentRevision:z.number().int().min(0),rows:z.array(z.object({studentId:uid,participation:z.number().finite().min(0).max(10000).nullable(),behavior:z.number().finite().min(0).max(10000).nullable(),discipline:z.number().finite().min(0).max(10000).nullable(),comment:z.string().max(500).optional()})).max(1000) });
 const gradesSchema = z.object({ requestId: z.string().min(1).max(200), activityId: uid, revision: z.number().int().min(0), rows: z.array(z.object({ studentId: uid, score: z.number().finite().min(0).max(10000).nullable(), criterionLevels: z.record(z.string(), z.number().int().min(0).max(5)).nullable().optional(), comment: text.optional() })).max(1000) });
 const competencyKey = z.enum(COMPETENCY_GROUPS.map(x => x.key) as [CompetencyKey, ...CompetencyKey[]]);
@@ -27,6 +27,8 @@ const criterionSchema = z.object({ id: uid.optional(), label: z.string().trim().
 const criterionImportSchema = z.object({ criteria: z.array(criterionSchema.omit({ id: true })).min(1).max(50) });
 const rosterRowSchema = z.object({ externalId: z.string().trim().min(1).max(200), number: z.number().int().positive().max(10000), name: z.string().trim().min(1).max(250) });
 const rosterBatchesSchema = z.array(z.object({ courseId: uid, rows: z.array(rosterRowSchema).min(1).max(250) })).min(1).max(20);
+const attendanceImportRowSchema = z.object({ courseId: uid, date: z.string(), block: z.number().int().min(1).max(12), studentId: uid, status: z.enum(["P", "A", "T", "E", "R"]), sourceSheet: z.string().min(1).max(200), sourceRow: z.number().int().positive(), sourceStudentName: z.string().max(250), sourceStudentNumber: z.number().int().positive().nullable() });
+const attendanceImportRowsSchema = z.array(attendanceImportRowSchema).min(1).max(30_000);
 const activityEvaluationSchema = z.object({ requestId:z.string().min(1).max(200), activityId:uid, revision:z.number().int().min(0), scoringMode:z.enum(["points","rubric"]), instrument:z.string().max(250), manualIndicators:z.array(z.object({id:z.string().min(1).max(100),code:z.string().max(80),label:z.string().trim().min(1).max(500),competency:competencyKey})).max(100).optional().default([]), indicatorPoints:z.array(z.object({indicatorId:z.string().min(1).max(100),points:z.number().finite().positive()})).max(100), rubric:z.array(z.object({id:z.string().min(1).max(100),label:z.string().trim().min(1).max(200),competency:competencyKey.nullable().optional(),indicator:z.string().max(500).optional(),indicatorId:z.string().min(1).max(100).optional(),weight:z.number().finite().positive().max(10000).optional(),levels:rubricLevelsSchema})).max(100) });
 const courseSchema = z.object({ code:z.string().trim().min(1).max(12).regex(/^[A-Za-z0-9_-]+$/), name:z.string().trim().min(1).max(120), startDate:z.string(), endDate:z.string(), weekly:z.array(z.object({weekday:z.number().int().min(1).max(7),blocks:z.array(z.number().int().min(1).max(12)).min(1).max(12)})).min(1).max(7).optional(), noClassDates:z.array(z.string()).max(100).default([]) });
 function parse<T>(schema: z.ZodType<T>, value: unknown): T { const r = schema.safeParse(value); if (!r.success) throw new AppError(400, "Datos inválidos: " + r.error.issues[0].message); return r.data; }
@@ -293,6 +295,143 @@ export class RegistroService {
   const rows: AttendanceRow[] = roster.filter(x => x.active || byId.has(x.id)).map(x => { const row = byId.get(x.id); const status = withdrawnFrom.has(x.id) && date >= withdrawnFrom.get(x.id)! ? "R" : row?.status as AttendanceRow["status"] ?? null; const eligible=status==="P"||status==="T"; return { studentId: x.id, number: x.number, name: x.name, status, behavior: eligible ? num(row?.behavior) : null, discipline: eligible ? num(row?.discipline) : null, participation: eligible ? num(row?.participation) : null, participationMax: eligible ? num(row?.participation_max) : null, dailyAssessmentRequired: eligible && Boolean(row?.daily_assessment_required), comment: str(row?.comment) }; });
   const scheduled = calendarSlot.rows.length > 0;
   return { session: { id: s ? str(s.id) : null, courseId, date, block, lessonType: s?.lesson_type as AttendanceView["session"]["lessonType"] ?? "teoria", topic: str(s?.topic), notes: str(s?.notes), revision: Number(s?.revision ?? 0), assessmentRevision:Number(s?.assessment_revision??0), scheduled, calendarThrough: str(through.rows[0]?.date)||classCalendar.through, status: sessionStatus(date, rows.map(x => x.status), this.today(), scheduled) }, rows };
+ }
+ private async buildAttendanceImportReview(ownerId:string,fileName:string,sourceFingerprint:string,rows:AttendanceImportRecord[],tx:DBAdapter){
+  if(!/^[a-f0-9]{64}$/i.test(sourceFingerprint))throw new AppError(400,"No pude verificar la huella del archivo Excel.");
+  const rowKeys=new Set<string>();
+  const sessions=new Map<string,{courseId:string;courseCode:string;date:string;block:number;revision:number;assessmentRevision:number;id:string|null;lessonType:string|null;topic:string;notes:string;rows:Map<string,Row|null>}>();
+  const courses=new Map<string,{code:string;roster:Student[]}>();
+  const sortedRows=[...rows].sort((a,b)=>a.courseId.localeCompare(b.courseId)||a.date.localeCompare(b.date)||a.block-b.block||a.studentId.localeCompare(b.studentId));
+  for(const row of sortedRows){
+   requireDate(row.date);
+   if(row.date>this.today())throw new AppError(400,"El libro contiene fechas futuras. Revisa el período antes de importar asistencia.","FUTURE_ATTENDANCE");
+   const key=`${row.courseId}:${row.date}:${row.block}:${row.studentId}`;
+   if(rowKeys.has(key))throw new AppError(400,"El libro repite a un estudiante en la misma fecha y bloque. Resuelve ese duplicado antes de importar.","DUPLICATE_SOURCE_ROW");
+   rowKeys.add(key);
+   if(!courses.has(row.courseId)){
+    const course=await this.requireCourse(ownerId,row.courseId,tx);
+    courses.set(row.courseId,{code:str(course.code),roster:await this.roster(ownerId,row.courseId,tx)});
+   }
+   const course=courses.get(row.courseId)!;
+   if(!course.roster.some(student=>student.id===row.studentId))throw new AppError(400,"Una fila vinculada no pertenece al curso seleccionado.","CROSS_COURSE");
+   const sessionKey=`${row.courseId}:${row.date}:${row.block}`;
+   if(!sessions.has(sessionKey))sessions.set(sessionKey,{courseId:row.courseId,courseCode:course.code,date:row.date,block:row.block,revision:0,assessmentRevision:0,id:null,lessonType:null,topic:"",notes:"",rows:new Map()});
+  }
+  if(!sortedRows.length)throw new AppError(400,"No hay marcas válidas para revisar en el archivo.");
+  const courseIds=[...courses.keys()];
+  const start=sortedRows.reduce((value,row)=>row.date<value?row.date:value,sortedRows[0]!.date),end=sortedRows.reduce((value,row)=>row.date>value?row.date:value,sortedRows[0]!.date);
+  const existing=(await tx.query("SELECT cs.course_id,cs.session_date::text AS date,cs.block,cs.id AS session_id,cs.revision,cs.assessment_revision,cs.lesson_type,cs.topic,cs.notes,a.student_id,a.status,a.behavior,a.behavior_max,a.participation,a.participation_max,a.discipline,a.discipline_max,a.daily_assessment_required,a.comment FROM class_sessions cs LEFT JOIN attendance a ON a.owner_id=cs.owner_id AND a.session_id=cs.id WHERE cs.owner_id=$1 AND cs.course_id=ANY($2::uuid[]) AND cs.session_date BETWEEN $3 AND $4 ORDER BY cs.session_date,cs.block,a.student_id",[ownerId,courseIds,start,end])).rows;
+  const attendanceSnapshot=(row:Row|null)=>row?{status:row.status===null?null:str(row.status),behavior:row.behavior===null?null:Number(row.behavior),behaviorMax:Number(row.behavior_max),participation:row.participation===null?null:Number(row.participation),participationMax:Number(row.participation_max),discipline:row.discipline===null?null:Number(row.discipline),disciplineMax:Number(row.discipline_max),dailyAssessmentRequired:Boolean(row.daily_assessment_required),comment:str(row.comment)}:null;
+  for(const value of existing){
+   const date=str(value.date).slice(0,10),courseId=str(value.course_id),block=Number(value.block),key=`${courseId}:${date}:${block}`,session=sessions.get(key);
+   if(!session)continue;
+   session.id=str(value.session_id);session.revision=Number(value.revision);session.assessmentRevision=Number(value.assessment_revision);session.lessonType=str(value.lesson_type);session.topic=str(value.topic);session.notes=str(value.notes);
+   if(value.student_id)session.rows.set(str(value.student_id),attendanceSnapshot(value));
+  }
+  const entries:AttendanceImportEntry[]=[];
+  const state=[] as unknown[];
+  for(const row of sortedRows){
+   const session=sessions.get(`${row.courseId}:${row.date}:${row.block}`)!;
+   const before=session.rows.get(row.studentId)??null;
+   const existingStatus=before?.status as AttendanceImportEntry["existingStatus"]??null;
+   const outcome=existingStatus===row.status?"same":existingStatus===null?"new":"conflict";
+   const student=courses.get(row.courseId)!.roster.find(value=>value.id===row.studentId)!;
+   const key=`${row.courseId}:${row.date}:${row.block}:${row.studentId}`;
+   entries.push({...row,courseCode:courses.get(row.courseId)!.code,studentName:student.name,studentNumber:student.number,existingStatus,outcome,revision:session.revision,key});
+   state.push({key,outcome,revision:session.revision,assessmentRevision:session.assessmentRevision,sessionId:session.id,lessonType:session.lessonType,topic:session.topic,notes:session.notes,before});
+  }
+  const previewId=payloadHash({fileName,sourceFingerprint,rows:sortedRows,state});
+  const preview={previewId,fileName,summary:{sourceRows:rows.length,mappedRows:entries.length,newRows:entries.filter(row=>row.outcome==="new").length,sameRows:entries.filter(row=>row.outcome==="same").length,conflictingRows:entries.filter(row=>row.outcome==="conflict").length,sessions:sessions.size},entries};
+  return {preview,sessions,attendanceSnapshot};
+ }
+ async previewAttendanceImport(ownerId:string,input:unknown){
+  const value=parse(z.object({fileName:z.string().trim().min(1).max(200),sourceFingerprint:z.string().regex(/^[a-f0-9]{64}$/i),rows:attendanceImportRowsSchema}),input);
+  await this.ensureOwner(ownerId);
+  return this.db.transaction(async tx=>(await this.buildAttendanceImportReview(ownerId,value.fileName,value.sourceFingerprint,value.rows,tx)).preview);
+ }
+ async importAttendance(ownerId:string,input:unknown):Promise<AttendanceImportReceipt>{
+  const value=parse(z.object({requestId:z.string().min(1).max(200),previewId:z.string().regex(/^[a-f0-9]{64}$/i),fileName:z.string().trim().min(1).max(200),sourceFingerprint:z.string().regex(/^[a-f0-9]{64}$/i),replaceConflicts:z.boolean(),confirmWithdrawals:z.boolean(),rows:attendanceImportRowsSchema}),input);
+  await this.ensureOwner(ownerId);
+  return this.operation(ownerId,value.requestId,{...value},async(tx,operationId)=>{
+   const {preview,sessions,attendanceSnapshot}=await this.buildAttendanceImportReview(ownerId,value.fileName,value.sourceFingerprint,value.rows,tx);
+   if(preview.previewId!==value.previewId)throw new AppError(409,"Los registros o la base cambiaron desde la vista previa. Analiza el Excel otra vez; no se guardó nada.","IMPORT_PREVIEW_STALE");
+   const eligible=preview.entries.filter(entry=>entry.outcome==="new"||(entry.outcome==="conflict"&&value.replaceConflicts));
+   const withdrawalsSkipped=eligible.filter(entry=>entry.status==="R"&&!value.confirmWithdrawals).length;
+   const actionable=eligible.filter(entry=>entry.status!=="R"||value.confirmWithdrawals);
+   if(!actionable.length)throw new AppError(409,withdrawalsSkipped?"Las marcas R requieren confirmar que el estudiante se retiró y que eso afecta el registro desde esa fecha.":"No hay marcas nuevas para importar. Los registros iguales se conservaron y los conflictos no se reemplazaron.","NOTHING_TO_IMPORT");
+   const bySession=new Map<string,AttendanceImportEntry[]>();
+   for(const entry of actionable){const key=`${entry.courseId}:${entry.date}:${entry.block}`,list=bySession.get(key)??[];list.push(entry);bySession.set(key,list);}
+   const batchId=randomUUID();
+   const restoreSessions=[] as unknown[];
+   const summary={imported:actionable.length,replaced:actionable.filter(entry=>entry.outcome==="conflict").length,unchanged:preview.summary.sameRows,conflictsKept:preview.summary.conflictingRows-actionable.filter(entry=>entry.outcome==="conflict").length,sessions:bySession.size,fileName:value.fileName,courseIds:[...new Set(actionable.map(entry=>entry.courseId))],courseCodes:[...new Set(actionable.map(entry=>entry.courseCode))],withdrawals:actionable.filter(entry=>entry.status==="R").length,withdrawalsSkipped};
+   for(const [sessionKey,entries] of bySession){
+    const first=entries[0]!;let snapshot=sessions.get(sessionKey)!;
+    const beforeSession=snapshot.id?{id:snapshot.id,lessonType:snapshot.lessonType,topic:snapshot.topic,notes:snapshot.notes,revision:snapshot.revision,assessmentRevision:snapshot.assessmentRevision}:null;
+    if(!snapshot.id){
+     const created=(await tx.query("INSERT INTO class_sessions(id,owner_id,course_id,session_date,block,lesson_type,topic,notes,revision) VALUES($1,$2,$3,$4,$5,'importada','','',0) RETURNING id,revision,assessment_revision,lesson_type,topic,notes",[randomUUID(),ownerId,first.courseId,first.date,first.block])).rows[0]!;
+     snapshot={...snapshot,id:str(created.id),revision:Number(created.revision),assessmentRevision:Number(created.assessment_revision),lessonType:str(created.lesson_type),topic:str(created.topic),notes:str(created.notes)};
+    }
+    const beforeRows=[] as {studentId:string;row:unknown}[];
+    const afterRows=[] as {studentId:string;row:unknown}[];
+    for(const entry of entries){
+     const before=snapshot.rows.get(entry.studentId)??null;
+     beforeRows.push({studentId:entry.studentId,row:before});
+     await tx.query("INSERT INTO attendance(owner_id,course_id,session_id,student_id,status) VALUES($1,$2,$3,$4,$5) ON CONFLICT(session_id,student_id) DO UPDATE SET status=EXCLUDED.status,behavior=CASE WHEN EXCLUDED.status IN ('A','E','R') THEN NULL ELSE attendance.behavior END,participation=CASE WHEN EXCLUDED.status IN ('A','E','R') THEN NULL ELSE attendance.participation END,discipline=CASE WHEN EXCLUDED.status IN ('A','E','R') THEN NULL ELSE attendance.discipline END,daily_assessment_required=CASE WHEN EXCLUDED.status IN ('A','E','R') THEN false ELSE attendance.daily_assessment_required END,updated_at=now()",[ownerId,entry.courseId,snapshot.id,entry.studentId,entry.status]);
+     const after=(await tx.query("SELECT status,behavior,behavior_max,participation,participation_max,discipline,discipline_max,daily_assessment_required,comment FROM attendance WHERE owner_id=$1 AND session_id=$2 AND student_id=$3",[ownerId,snapshot.id,entry.studentId])).rows[0]!;
+     afterRows.push({studentId:entry.studentId,row:attendanceSnapshot(after)});
+    }
+    const afterRevision=snapshot.revision+1;
+    await tx.query("UPDATE class_sessions SET revision=$3,updated_at=now() WHERE owner_id=$1 AND id=$2",[ownerId,snapshot.id,afterRevision]);
+    const afterSession={id:snapshot.id,lessonType:snapshot.lessonType,topic:snapshot.topic,notes:snapshot.notes,revision:afterRevision,assessmentRevision:snapshot.assessmentRevision};
+    restoreSessions.push({courseId:first.courseId,date:first.date,block:first.block,beforeSession,afterSession,beforeRows,afterRows});
+    await this.log(tx,ownerId,"attendance.imported",str(snapshot.id),{fileName:value.fileName,rows:beforeRows},{fileName:value.fileName,rows:afterRows});
+   }
+   await tx.query("INSERT INTO attendance_import_batches(id,owner_id,file_name,summary,restoration) VALUES($1,$2,$3,$4::jsonb,$5::jsonb)",[batchId,ownerId,value.fileName,JSON.stringify(summary),JSON.stringify({sessions:restoreSessions})]);
+   const receipt:AttendanceImportReceipt={requestId:value.requestId,operationId,entityId:batchId,batchId,savedRows:actionable.length,revision:1,replayed:false,savedAt:new Date().toISOString(),imported:summary.imported,replaced:summary.replaced,unchanged:summary.unchanged,conflictsKept:summary.conflictsKept,withdrawalsSkipped,sessions:summary.sessions};
+   return receipt;
+  });
+ }
+ async revertAttendanceImport(ownerId:string,batchId:string){
+  await this.ensureOwner(ownerId);parse(uid,batchId);
+  return this.db.transaction(async tx=>{
+   const batch=(await tx.query("SELECT id,file_name,summary,restoration,status FROM attendance_import_batches WHERE owner_id=$1 AND id=$2 FOR UPDATE",[ownerId,batchId])).rows[0];
+   if(!batch)throw new AppError(404,"No encontré esa importación de asistencia.","NOT_FOUND");
+   if(str(batch.status)==="reverted")return {batchId,reverted:0,alreadyReverted:true};
+   const restoration=json<{sessions:{courseId:string;date:string;block:number;beforeSession:{id:string;lessonType:string;topic:string;notes:string;revision:number;assessmentRevision:number}|null;afterSession:{id:string;lessonType:string;topic:string;notes:string;revision:number;assessmentRevision:number};beforeRows:{studentId:string;row:Row|null}[];afterRows:{studentId:string;row:Row|null}[]}[]}>(batch.restoration,{sessions:[]});
+   const normalizeRow=(row:Row|null)=>row?{status:row.status===null?null:str(row.status),behavior:row.behavior===null?null:Number(row.behavior),behaviorMax:Number(row.behavior_max),participation:row.participation===null?null:Number(row.participation),participationMax:Number(row.participation_max),discipline:row.discipline===null?null:Number(row.discipline),disciplineMax:Number(row.discipline_max),dailyAssessmentRequired:Boolean(row.daily_assessment_required),comment:str(row.comment)}:null;
+   const conflicts:string[]=[];
+   for(const session of restoration.sessions){
+    const current=(await tx.query("SELECT id,revision,assessment_revision,lesson_type,topic,notes FROM class_sessions WHERE owner_id=$1 AND course_id=$2 AND session_date=$3 AND block=$4 FOR UPDATE",[ownerId,session.courseId,session.date,session.block])).rows[0];
+    if(!current||str(current.id)!==session.afterSession.id||Number(current.revision)!==session.afterSession.revision||Number(current.assessment_revision)!==session.afterSession.assessmentRevision||str(current.lesson_type)!==session.afterSession.lessonType||str(current.topic)!==session.afterSession.topic||str(current.notes)!==session.afterSession.notes){conflicts.push(`${session.date} bloque ${session.block}`);continue;}
+    for(const expected of session.afterRows){
+     const currentRow=(await tx.query("SELECT status,behavior,behavior_max,participation,participation_max,discipline,discipline_max,daily_assessment_required,comment FROM attendance WHERE owner_id=$1 AND session_id=$2 AND student_id=$3",[ownerId,session.afterSession.id,expected.studentId])).rows[0]??null;
+     if(payloadHash(normalizeRow(currentRow))!==payloadHash(expected.row))conflicts.push(`${session.date} bloque ${session.block}, estudiante ${expected.studentId.slice(0,8)}`);
+    }
+    if(!session.beforeSession){
+     const currentCount=Number((await tx.query("SELECT count(*)::int AS count FROM attendance WHERE owner_id=$1 AND session_id=$2",[ownerId,session.afterSession.id])).rows[0]?.count??0);
+     if(currentCount!==session.afterRows.length)conflicts.push(`${session.date} bloque ${session.block}, contiene registros posteriores`);
+    }
+   }
+   if(conflicts.length)throw new AppError(409,`No deshice nada porque hay cambios posteriores en: ${conflicts.slice(0,8).join('; ')}${conflicts.length>8?'…':''}.`,"IMPORT_REVERT_CONFLICT");
+   let reverted=0;
+   for(const session of restoration.sessions){
+    const sessionId=session.afterSession.id;
+    for(const before of session.beforeRows){
+     if(!before.row)await tx.query("DELETE FROM attendance WHERE owner_id=$1 AND session_id=$2 AND student_id=$3",[ownerId,sessionId,before.studentId]);
+     else await tx.query("UPDATE attendance SET status=$4,behavior=$5,behavior_max=$6,participation=$7,participation_max=$8,discipline=$9,discipline_max=$10,daily_assessment_required=$11,comment=$12,updated_at=now() WHERE owner_id=$1 AND session_id=$2 AND student_id=$3",[ownerId,sessionId,before.studentId,before.row.status,before.row.behavior,before.row.behaviorMax,before.row.participation,before.row.participationMax,before.row.discipline,before.row.disciplineMax,before.row.dailyAssessmentRequired,before.row.comment]);
+     reverted++;
+    }
+    if(!session.beforeSession)await tx.query("DELETE FROM class_sessions WHERE owner_id=$1 AND id=$2",[ownerId,sessionId]);
+    else await tx.query("UPDATE class_sessions SET lesson_type=$3,topic=$4,notes=$5,revision=revision+1,updated_at=now() WHERE owner_id=$1 AND id=$2",[ownerId,sessionId,session.beforeSession.lessonType,session.beforeSession.topic,session.beforeSession.notes]);
+    await this.log(tx,ownerId,"attendance.import.reverted",sessionId,{fileName:str(batch.file_name),rows:session.afterRows},{fileName:str(batch.file_name),restored:session.beforeRows});
+   }
+   await tx.query("UPDATE attendance_import_batches SET status='reverted',reverted_at=now() WHERE owner_id=$1 AND id=$2",[ownerId,batchId]);
+   return {batchId,reverted,alreadyReverted:false};
+  });
+ }
+ async attendanceImports(ownerId:string){
+  await this.ensureOwner(ownerId);
+  return (await this.db.query("SELECT id,file_name,summary,status,created_at::text AS created_at,reverted_at::text AS reverted_at FROM attendance_import_batches WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 30",[ownerId])).rows.map(row=>({id:str(row.id),fileName:str(row.file_name),summary:json<Record<string,unknown>>(row.summary,{}),status:str(row.status),createdAt:str(row.created_at),revertedAt:row.reverted_at?str(row.reverted_at):null}));
  }
  async attendance(ownerId: string, courseId: string, date: string, block: number): Promise<AttendanceView> { await this.ensureOwner(ownerId); requireDate(date); if (!Number.isInteger(block) || block < 1 || block > 12) throw new AppError(400, "El bloque debe estar entre 1 y 12."); await this.requireCourse(ownerId, courseId); return this.attendanceView(ownerId, courseId, date, block, this.db); }
  async registerSummary(ownerId: string, courseId: string): Promise<CourseRegisterSummary> {
@@ -589,24 +728,29 @@ export class RegistroService {
     const rubricIds=new Set<string>();
     const catalogRows=await this.evaluationCriteria(ownerId,tx);catalog=new Map(catalogRows.map(item=>[item.id,item]));
     const sourceInstrument=linkedSequenceActivity?.assessmentInstrument;
+    const activityCriterionPrefix=`activity:${current.sharedId??current.id}:`;
     rubric=value.rubric.map(item=>{
      if(rubricIds.has(item.id))throw new AppError(400,"No repitas un criterio en la misma rúbrica.");rubricIds.add(item.id);
      const sourcePrefix=linkedSequenceActivity?`sequence:${linkedSequenceActivity.id}:`:null;
      const sourceIndex=sourcePrefix&&item.id.startsWith(sourcePrefix)?Number(item.id.slice(sourcePrefix.length))-1:-1;
      const isSourceCriterion=sourceIndex>=0;
+     const isActivityCriterion=item.id.startsWith(activityCriterionPrefix);
+     if(item.id.startsWith("activity:")&&!isActivityCriterion)throw new AppError(400,"El criterio local no pertenece a esta actividad.");
      if(item.id.startsWith("sequence:")&&!isSourceCriterion)throw new AppError(400,"El criterio importado no pertenece al instrumento de la secuencia vinculada.");
      if(isSourceCriterion){
       const expectedLabel=sourceInstrument?.criteria[sourceIndex];
       const expectedLevels=sourceInstrument?.levels??[];
       const sameLevels=item.levels.length===expectedLevels.length&&item.levels.every((level,index)=>level.label===expectedLevels[index]?.label&&level.points===expectedLevels[index]?.points&&(level.description??"").trim()===(expectedLevels[index]?.description??"").trim());
       if(!sourceInstrument?.scored||sourceInstrument.kind==="checklist"||!expectedLabel||item.label!==expectedLabel||!sameLevels)throw new AppError(400,"El criterio o su escala ya no coincide con el anexo revisado. Vuelve a cargar el instrumento fuente.");
-     }else if(!catalog.has(item.id))throw new AppError(400,`El criterio “${item.label}” ya no está en el catálogo activo. Actualiza la selección antes de guardar.`);
+     }else if(!isActivityCriterion&&!catalog.has(item.id))throw new AppError(400,`El criterio “${item.label}” ya no está en el catálogo activo. Actualiza la selección antes de guardar.`);
      const allocation=allocations.find(row=>row.indicatorId===item.indicatorId);if(!allocation)throw new AppError(400,`El criterio “${item.label}” debe vincularse con uno de los indicadores asignados.`);
-     const catalogCriterion=catalog.get(item.id);const currentLabel=isSourceCriterion?item.label:catalogCriterion!.label;const currentLevels=isSourceCriterion?item.levels:catalogCriterion!.levels;
+     if(isActivityCriterion){const fixedScale=[["Insuficiente",1],["Suficiente",2],["Bueno",3],["Excelente",4]] as const;const matchesScale=item.levels.length===fixedScale.length&&item.levels.every((level,index)=>level.label===fixedScale[index]![0]&&level.points===fixedScale[index]![1]);if(!matchesScale)throw new AppError(400,"Los criterios de la actividad deben conservar la escala del Excel: Insuficiente 1, Suficiente 2, Bueno 3 y Excelente 4.");}
+     const catalogCriterion=catalog.get(item.id);const currentLabel=isSourceCriterion||isActivityCriterion?item.label:catalogCriterion!.label;const currentLevels=isSourceCriterion?item.levels:isActivityCriterion?item.levels:catalogCriterion!.levels;
      if(currentLevels.some(level=>!level.description?.trim()))throw new AppError(400,"Completa los descriptores de cada nivel.");
      return {...item,label:currentLabel,indicator:allocation.label,competency:allocation.competency,weight:item.weight??1,levels:currentLevels.map(level=>({...level,label:level.label.trim(),description:level.description?.trim()??""}))};
     });
-    rubricMaximum(rubric);
+    const rubricMaximumValue=rubricMaximum(rubric);
+    if(rubric.every(item=>item.id.startsWith(activityCriterionPrefix))&&round(rubricMaximumValue)!==round(current.maxPoints))throw new AppError(400,`El valor de los criterios debe sumar ${current.maxPoints} puntos; ahora suma ${rubricMaximumValue}.`);
     for(const allocation of allocations)if(!rubric.some(item=>item.indicatorId===allocation.indicatorId))throw new AppError(400,`Añade un criterio que permita valorar el indicador “${allocation.label}”.`);
    } else if(value.rubric.length)throw new AppError(400,"La calificación directa no puede guardar criterios de rúbrica.");
    const instrument=value.instrument.trim()||(value.scoringMode==="rubric"?"Rúbrica analítica":"Puntaje directo");
@@ -985,7 +1129,7 @@ export class RegistroService {
  }
 
  async audit(ownerId: string): Promise<AuditEntry[]> { await this.ensureOwner(ownerId); return (await this.db.query("SELECT id,operation,entity_id,created_at::text AS created_at,before_data,after_data FROM audit_entries WHERE owner_id=$1 ORDER BY created_at DESC,id DESC LIMIT 200", [ownerId])).rows.map(r => ({ id: str(r.id), operation: str(r.operation), entityId: str(r.entity_id), createdAt: str(r.created_at), before: json(r.before_data, null), after: json(r.after_data, null) })); }
- async exportData(ownerId: string) { await this.ensureOwner(ownerId); return this.db.transaction(async tx => { const read = async (table: string, fields: string) => (await tx.query(`SELECT ${fields} FROM ${table} WHERE owner_id=$1`, [ownerId])).rows; return { format: "registro-docente/v1", exportedAt: new Date().toISOString(), ownerId, plans: await read("evaluation_plans", "period,config,active,revision"), courses: await read("courses", "id,code,name"), students: await read("students", "id,course_id,external_id,number,name,active"), scheduledSessions: await read("scheduled_sessions", "course_id,session_date::text AS date,block"), sessions: await read("class_sessions", "id,course_id,session_date::text AS date,block,lesson_type,topic,notes,revision"), attendance: await read("attendance", "course_id,session_id,student_id,status,behavior,behavior_max,comment"), activities: await read("activities", activityFields), criteria: await read("evaluation_criteria", "id,label,levels,active,updated_at::text"), criterionValues: await read("evaluation_criterion_values", "criterion_id,level_position,level_label,points,descriptor"), activityCriteria: await read("activity_criteria", "activity_id,criterion_key,catalog_criterion_id,criterion_label,indicator_id,competency,weight,position,levels_snapshot"), grades: await read("grades", "course_id,activity_id,student_id,score,criterion_levels,comment"), criterionRatings: await read("grade_criterion_ratings", "activity_id,student_id,criterion_key,level_position,level_label,points,descriptor"), periodScorePlans: await read("period_score_plans", "period,revision,enabled,columns"), periodScores: await read("period_scores", "period,course_id,student_id,column_id,score"), audit: await read("audit_entries", "id,operation,entity_id,created_at::text,before_data,after_data") }; }); }
+ async exportData(ownerId: string) { await this.ensureOwner(ownerId); return this.db.transaction(async tx => { const read = async (table: string, fields: string) => (await tx.query(`SELECT ${fields} FROM ${table} WHERE owner_id=$1`, [ownerId])).rows; return { format: "registro-docente/v1", exportedAt: new Date().toISOString(), ownerId, plans: await read("evaluation_plans", "period,config,active,revision"), courses: await read("courses", "id,code,name"), students: await read("students", "id,course_id,external_id,number,name,active"), scheduledSessions: await read("scheduled_sessions", "course_id,session_date::text AS date,block"), sessions: await read("class_sessions", "id,course_id,session_date::text AS date,block,lesson_type,topic,notes,revision"), attendance: await read("attendance", "course_id,session_id,student_id,status,behavior,behavior_max,comment"), activities: await read("activities", activityFields), criteria: await read("evaluation_criteria", "id,label,levels,active,updated_at::text"), criterionValues: await read("evaluation_criterion_values", "criterion_id,level_position,level_label,points,descriptor"), activityCriteria: await read("activity_criteria", "activity_id,criterion_key,catalog_criterion_id,criterion_label,indicator_id,competency,weight,position,levels_snapshot"), grades: await read("grades", "course_id,activity_id,student_id,score,criterion_levels,comment"), criterionRatings: await read("grade_criterion_ratings", "activity_id,student_id,criterion_key,level_position,level_label,points,descriptor"), periodScorePlans: await read("period_score_plans", "period,revision,enabled,columns"), periodScores: await read("period_scores", "period,course_id,student_id,column_id,score"), attendanceImportBatches: await read("attendance_import_batches", "id,file_name,summary,restoration,status,created_at::text,reverted_at::text"), audit: await read("audit_entries", "id,operation,entity_id,created_at::text,before_data,after_data") }; }); }
 
  async report(ownerId: string, courseId: string, studentId: string, requestedPeriod?: string): Promise<StudentReport> {
   await this.ensureOwner(ownerId); const c = await this.requireCourse(ownerId, courseId); const person = (await this.roster(ownerId, courseId)).find(s => s.id === studentId); if (!person) throw new AppError(404, "El estudiante no pertenece a este curso.", "NOT_FOUND"); const p = requestedPeriod ? await this.planForPeriod(ownerId, requestedPeriod) : await this.currentPlan(ownerId);

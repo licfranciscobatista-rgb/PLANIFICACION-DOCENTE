@@ -30,13 +30,15 @@ CREATE TABLE IF NOT EXISTS students (
 CREATE TABLE IF NOT EXISTS class_sessions (
  id uuid PRIMARY KEY, owner_id text NOT NULL, course_id uuid NOT NULL,
  session_date date NOT NULL, block integer NOT NULL CHECK(block BETWEEN 1 AND 12),
- lesson_type text NOT NULL DEFAULT 'teoria' CHECK(lesson_type IN ('teoria','practica','ejercicios','repaso','correcciones','actividad_escolar')),
+ lesson_type text NOT NULL DEFAULT 'teoria' CHECK(lesson_type IN ('teoria','practica','ejercicios','repaso','correcciones','actividad_escolar','importada')),
  topic text NOT NULL DEFAULT '', notes text NOT NULL DEFAULT '',
  revision integer NOT NULL DEFAULT 0 CHECK(revision>=0), assessment_revision integer NOT NULL DEFAULT 0 CHECK(assessment_revision>=0), updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(owner_id,course_id,session_date,block), UNIQUE(id,course_id,owner_id),
  FOREIGN KEY(course_id,owner_id) REFERENCES courses(id,owner_id)
 );
 ALTER TABLE class_sessions ADD COLUMN IF NOT EXISTS assessment_revision integer NOT NULL DEFAULT 0 CHECK(assessment_revision>=0);
+ALTER TABLE class_sessions DROP CONSTRAINT IF EXISTS class_sessions_lesson_type_check;
+ALTER TABLE class_sessions ADD CONSTRAINT class_sessions_lesson_type_check CHECK(lesson_type IN ('teoria','practica','ejercicios','repaso','correcciones','actividad_escolar','importada'));
 CREATE TABLE IF NOT EXISTS scheduled_sessions (
  owner_id text NOT NULL,
  course_id uuid NOT NULL,
@@ -60,6 +62,13 @@ CREATE TABLE IF NOT EXISTS attendance (
  CHECK(behavior IS NULL OR behavior<=behavior_max),
  FOREIGN KEY(session_id,course_id,owner_id) REFERENCES class_sessions(id,course_id,owner_id),
  FOREIGN KEY(student_id,course_id,owner_id) REFERENCES students(id,course_id,owner_id)
+);
+CREATE TABLE IF NOT EXISTS attendance_import_batches (
+ id uuid PRIMARY KEY, owner_id text NOT NULL REFERENCES workspaces(owner_id),
+ file_name text NOT NULL, summary jsonb NOT NULL, restoration jsonb NOT NULL,
+ status text NOT NULL DEFAULT 'applied' CHECK(status IN ('applied','reverted')),
+ created_at timestamptz NOT NULL DEFAULT now(), reverted_at timestamptz,
+ UNIQUE(id,owner_id)
 );
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS participation numeric;
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS participation_max numeric NOT NULL DEFAULT 10 CHECK(participation_max>0);

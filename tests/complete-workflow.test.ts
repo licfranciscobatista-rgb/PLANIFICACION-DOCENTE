@@ -159,6 +159,49 @@ test('actividad manual sin secuencia conserva indicadores, competencias, rúbric
  assert.equal(row.scores.find(score=>score.key===columns.find(column=>column.label.includes('Justificación de la resultante'))?.key)?.points,2);
 });
 
+test('criterios editables en la actividad aceptan puntos por criterio y llegan a la misma matriz que el puntaje directo',async()=>{
+ const inlineOwner='inline-criteria-teacher';
+ const bootstrap=await service.bootstrap(inlineOwner);
+ const course=bootstrap.courses.find(item=>item.code==='5A')!;
+ assert.equal(bootstrap.criteriaCatalog.length,0,'la rúbrica local no depende de tener criterios guardados en un catálogo global');
+ const rubricActivity=await service.createActivity(inlineOwner,{courseId:course.id,category:'sequence',title:'Suma de vectores · rúbrica editable',date:'2026-11-18',maxPoints:10});
+ const indicator={id:'manual:inline-vectors',code:'I1',label:'Representa y justifica la suma',competency:'logico_matematica' as const};
+ const levels:RubricLevel[]=[{label:'Insuficiente',points:1,description:'No representa los vectores.'},{label:'Suficiente',points:2,description:'Representa con errores parciales.'},{label:'Bueno',points:3,description:'Representa correctamente.'},{label:'Excelente',points:4,description:'Representa y justifica con precisión.'}];
+ const rubric:Activity['rubric']=[
+  {id:`activity:${rubricActivity.id}:criterion:calculo`,label:'Cálculo de la resultante',indicatorId:indicator.id,weight:1,levels},
+  {id:`activity:${rubricActivity.id}:criterion:justificacion`,label:'Justificación del procedimiento',indicatorId:indicator.id,weight:1.5,levels},
+ ];
+ const configured=await service.configureActivityEvaluation(inlineOwner,{requestId:randomUUID(),activityId:rubricActivity.id,revision:rubricActivity.revision,scoringMode:'rubric',instrument:'Rúbrica de suma',manualIndicators:[indicator],indicatorPoints:[{indicatorId:indicator.id,points:10}],rubric});
+ assert.deepEqual(configured[0].rubric.map(item=>[item.label,item.weight]),[['Cálculo de la resultante',1],['Justificación del procedimiento',1.5]]);
+ assert.equal(configured[0].rubric.reduce((sum,item)=>sum+Math.max(...item.levels.map(level=>level.points))*(item.weight??1),0),10,'los valores editados de cada criterio deben sumar el máximo de la actividad');
+ const localRows=await db.query('SELECT catalog_criterion_id,criterion_label,levels_snapshot FROM activity_criteria WHERE owner_id=$1 AND activity_id=$2 ORDER BY position',[inlineOwner,rubricActivity.id]);
+ assert.deepEqual(localRows.rows.map(row=>[row.catalog_criterion_id,row.criterion_label]),[[null,'Cálculo de la resultante'],[null,'Justificación del procedimiento']]);
+ assert.equal((await service.bootstrap(inlineOwner)).criteriaCatalog.length,0,'guardar una actividad no crea ni altera plantillas globales');
+ const rubricRows=(await service.grades(inlineOwner,rubricActivity.id)).rows.map((row,index)=>({studentId:row.studentId,score:null,criterionLevels:index===0?{[rubric[0]!.id]:3,[rubric[1]!.id]:1}:null}));
+ await service.saveGrades(inlineOwner,{requestId:randomUUID(),activityId:rubricActivity.id,revision:configured[0]!.revision,rows:rubricRows});
+
+ const directActivity=await service.createActivity(inlineOwner,{courseId:course.id,category:'sequence',title:'Suma de vectores · puntos directos',date:'2026-11-19',maxPoints:10,competency:'logico_matematica'});
+ const directConfigured=await service.configureActivityEvaluation(inlineOwner,{requestId:randomUUID(),activityId:directActivity.id,revision:directActivity.revision,scoringMode:'points',instrument:'Puntaje directo',indicatorPoints:[],rubric:[]});
+ const directRows=(await service.grades(inlineOwner,directActivity.id)).rows.map((row,index)=>({studentId:row.studentId,score:index===0?6.5:null}));
+ await service.saveGrades(inlineOwner,{requestId:randomUUID(),activityId:directActivity.id,revision:directConfigured[0]!.revision,rows:directRows});
+
+ const firstStudent=course.students[0]!;
+ const report=await service.report(inlineOwner,course.id,firstStudent.id);
+ assert.equal(report.grades.find(item=>item.activityId===rubricActivity.id)?.score,7,'la selección de niveles calcula una nota sobre 10');
+ assert.equal(report.grades.find(item=>item.activityId===directActivity.id)?.score,6.5,'el modo directo conserva la nota sobre 10');
+ const ledger=await service.teacherLedger(inlineOwner);
+ const logicalGroup=ledger.groups.find(group=>group.key==='logico_matematica')!;
+ assert.ok(logicalGroup.columns.some(column=>column.label==='Suma de vectores · rúbrica editable · Cálculo de la resultante'));
+ assert.ok(logicalGroup.columns.some(column=>column.label==='Suma de vectores · puntos directos'));
+ const ledgerRow=ledger.rows.find(row=>row.course.id===course.id&&row.student.id===firstStudent.id)!;
+ const firstCriterionColumn=logicalGroup.columns.find(column=>column.label.endsWith('Cálculo de la resultante'))!;
+ const secondCriterionColumn=logicalGroup.columns.find(column=>column.label.endsWith('Justificación del procedimiento'))!;
+ const directColumn=logicalGroup.columns.find(column=>column.label==='Suma de vectores · puntos directos')!;
+ assert.deepEqual([ledgerRow.scores.find(score=>score.key===firstCriterionColumn.key)?.points,ledgerRow.scores.find(score=>score.key===firstCriterionColumn.key)?.possible],[4,4]);
+ assert.deepEqual([ledgerRow.scores.find(score=>score.key===secondCriterionColumn.key)?.points,ledgerRow.scores.find(score=>score.key===secondCriterionColumn.key)?.possible],[3,6]);
+ assert.deepEqual([ledgerRow.scores.find(score=>score.key===directColumn.key)?.points,ledgerRow.scores.find(score=>score.key===directColumn.key)?.possible],[6.5,10]);
+});
+
 test('una actividad evaluada en P2 conserva el vínculo exacto con una clase planificada en P1',async()=>{
  const bootstrap=await service.bootstrap(owner);
  assert.equal(bootstrap.plan.period,'P2');
