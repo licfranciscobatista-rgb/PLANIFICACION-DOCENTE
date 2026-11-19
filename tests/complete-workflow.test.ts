@@ -202,6 +202,19 @@ test('criterios editables en la actividad aceptan puntos por criterio y llegan a
  assert.deepEqual([ledgerRow.scores.find(score=>score.key===directColumn.key)?.points,ledgerRow.scores.find(score=>score.key===directColumn.key)?.possible],[6.5,10]);
 });
 
+test('la elección por competencias queda guardada como rúbrica pendiente y no se convierte en nota directa',async()=>{
+ const owner='rubric-draft-choice';
+ const bootstrap=await service.bootstrap(owner);
+ const course=bootstrap.courses.find(item=>item.code==='5A')!;
+ const created=await service.createSharedActivity(owner,{courseIds:[course.id],activity:{category:'sequence',title:'Actividad con matriz pendiente',date:'2026-11-20',maxPoints:10,scoringMode:'rubric',rubric:[],requestId:'save-rubric-choice'}});
+ const activity=created[0]!;
+ assert.equal(activity.scoringMode,'rubric');
+ assert.equal(activity.rubric.length,0);
+ assert.equal(activity.instrument,'','una rúbrica sin configurar no debe aparecer como puntaje directo');
+ const student=(await service.grades(owner,activity.id)).rows[0]!;
+ await assert.rejects(service.saveGrades(owner,{requestId:'cannot-grade-rubric-draft',activityId:activity.id,revision:activity.revision,rows:[{studentId:student.studentId,score:null}]}),/rúbrica todavía no está configurada/);
+});
+
 test('una actividad evaluada en P2 conserva el vínculo exacto con una clase planificada en P1',async()=>{
  const bootstrap=await service.bootstrap(owner);
  assert.equal(bootstrap.plan.period,'P2');

@@ -642,7 +642,7 @@ export class RegistroService {
    const categoryCompetency = current.categories.find(c => c.key === v.category)?.competency ?? null;
    const activityCompetency = v.competency ?? categoryCompetency ?? defaultForCategory(v.category);
    const preparedCriteria = criteria.map(c => ({ ...c, competency: c.competency ?? activityCompetency, weight: c.weight ?? 1 }));
-   if (mode === "rubric") { rubricMaximum(preparedCriteria); if (preparedCriteria.some(c => !c.competency)) throw new AppError(400, "Asigna cada criterio a una competencia antes de guardar la rúbrica."); if (preparedCriteria.some(c => c.levels.some(level => !level.description?.trim()))) throw new AppError(400, "Completa el descriptor de cada nivel de la rúbrica."); }
+   if (mode === "rubric" && preparedCriteria.length) { rubricMaximum(preparedCriteria); if (preparedCriteria.some(c => !c.competency)) throw new AppError(400, "Asigna cada criterio a una competencia antes de guardar la rúbrica."); if (preparedCriteria.some(c => c.levels.some(level => !level.description?.trim()))) throw new AppError(400, "Completa el descriptor de cada nivel de la rúbrica."); }
    if (mode === "points" && !activityCompetency) throw new AppError(400, "Asigna una competencia a esta actividad de puntos directos.");
    if (v.category === "notebook" && (await tx.query("SELECT id FROM activities WHERE owner_id=$1 AND course_id=$2 AND category='notebook' AND activity_date=$3 AND block=$4", [ownerId, v.courseId, v.date, v.block ?? 1])).rows.length) throw new AppError(409, "Ya existe una revisión diaria de libreta para esta fecha y bloque.");
    if (v.category === "notebook" && v.maxPoints !== (current.categories.find(c => c.key === "notebook")?.dailyMax ?? 2)) throw new AppError(400, "El máximo de la revisión diaria debe coincidir con su escala en el plan.");
@@ -676,7 +676,7 @@ export class RegistroService {
    const categoryCompetency = current.categories.find(c => c.key === first.category)?.competency ?? null;
    const activityCompetency = first.competency ?? categoryCompetency ?? defaultForCategory(first.category);
    const preparedCriteria = criteria.map(c => ({ ...c, competency: c.competency ?? activityCompetency, weight: c.weight ?? 1 }));
-   if (mode === "rubric") {
+   if (mode === "rubric" && preparedCriteria.length) {
     rubricMaximum(preparedCriteria);
     if (preparedCriteria.some(c => !c.competency)) throw new AppError(400, "Asigna cada criterio a una competencia antes de guardar la rúbrica.");
     if (preparedCriteria.some(c => c.levels.some(level => !level.description?.trim()))) throw new AppError(400, "Completa el descriptor de cada nivel de la rúbrica.");
@@ -739,9 +739,7 @@ export class RegistroService {
      if(item.id.startsWith("sequence:")&&!isSourceCriterion)throw new AppError(400,"El criterio importado no pertenece al instrumento de la secuencia vinculada.");
      if(isSourceCriterion){
       const expectedLabel=sourceInstrument?.criteria[sourceIndex];
-      const expectedLevels=sourceInstrument?.levels??[];
-      const sameLevels=item.levels.length===expectedLevels.length&&item.levels.every((level,index)=>level.label===expectedLevels[index]?.label&&level.points===expectedLevels[index]?.points&&(level.description??"").trim()===(expectedLevels[index]?.description??"").trim());
-      if(!sourceInstrument?.scored||sourceInstrument.kind==="checklist"||!expectedLabel||item.label!==expectedLabel||!sameLevels)throw new AppError(400,"El criterio o su escala ya no coincide con el anexo revisado. Vuelve a cargar el instrumento fuente.");
+      if(!sourceInstrument?.scored||sourceInstrument.kind==="checklist"||!expectedLabel)throw new AppError(400,"Este criterio no pertenece a un instrumento puntuable de la secuencia revisada.");
      }else if(!isActivityCriterion&&!catalog.has(item.id))throw new AppError(400,`El criterio “${item.label}” ya no está en el catálogo activo. Actualiza la selección antes de guardar.`);
      const allocation=allocations.find(row=>row.indicatorId===item.indicatorId);if(!allocation)throw new AppError(400,`El criterio “${item.label}” debe vincularse con uno de los indicadores asignados.`);
      if(isActivityCriterion){const fixedScale=[["Insuficiente",1],["Suficiente",2],["Bueno",3],["Excelente",4]] as const;const matchesScale=item.levels.length===fixedScale.length&&item.levels.every((level,index)=>level.label===fixedScale[index]![0]&&level.points===fixedScale[index]![1]);if(!matchesScale)throw new AppError(400,"Los criterios de la actividad deben conservar la escala del Excel: Insuficiente 1, Suficiente 2, Bueno 3 y Excelente 4.");}
@@ -990,6 +988,7 @@ export class RegistroService {
    const before = await this.gradesView(ownerId, v.activityId, tx), a = before.activity; this.validateStudents(v.rows, await this.roster(ownerId, a.courseId, tx));
    const periodPlan=await this.planForPeriod(ownerId,a.period,tx);
     const reviewedSequence=await this.curriculumSequence(ownerId,tx)??periodPlan.sequence;
+   if(a.scoringMode==="rubric"&&!a.rubric.length)throw new AppError(409,"La rúbrica todavía no está configurada. Define sus criterios antes de capturar calificaciones.","EVALUATION_NOT_CONFIGURED");
    if(a.scoringMode==="rubric"&&a.category!=="notebook"&&a.category!=="participation"&&reviewedSequence?.reviewed&&reviewedSequence.indicators.length&&!a.indicatorPoints.length)throw new AppError(409,"Esta actividad todavía no está distribuida por indicador. Configura la rúbrica antes de guardar calificaciones.","EVALUATION_NOT_CONFIGURED");
    const normalized = v.rows.map(r => { let score = r.score; const levels = r.criterionLevels ?? null; if (a.scoringMode === "rubric") { if (levels) { for(const [criterionId,index] of Object.entries(levels)){const criterion=a.rubric.find(item=>item.id===criterionId);if(!criterion)throw new AppError(400,"La selección contiene un criterio que no pertenece a la rúbrica.");if(!Number.isInteger(index)||index<0||index>=criterion.levels.length)throw new AppError(400,`El nivel elegido para “${criterion.label}” no existe.`);} if(Object.keys(levels).length===a.rubric.length)rubricScore(a.rubric,levels); score = Object.keys(levels).length === a.rubric.length ? a.indicatorPoints.length ? allocatedRubricScore(a.rubric,levels,a.indicatorPoints) : round(rubricScore(a.rubric, levels) / rubricMaximum(a.rubric) * a.maxPoints) : null; } else if (score !== null) throw new AppError(400, "La rúbrica necesita un nivel seleccionado para cada criterio."); } else if (levels) throw new AppError(400, "La actividad utiliza puntos directos, no niveles."); if (score !== null && score > a.maxPoints) throw new AppError(400, `La nota no puede superar ${a.maxPoints}.`); return { ...r, score, levels }; });
    for (const r of normalized) {

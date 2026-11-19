@@ -334,9 +334,11 @@ test('el servicio guarda, valida y calcula una rúbrica fuente de tres niveles s
     await service.saveCurriculumSequence(owner, { source: 'uploaded', sourceName: 'secuencia.pdf', sourceText: '', reviewed: true, activities: [sequenceActivity], indicators: [{ id: 'indicator-1', code: 'I2', label: 'Aplica razonamientos matemáticos.', competency: 'logico_matematica' }] });
     const created = await service.createSharedActivity(owner, { courseIds: [course.id], activity: { category: 'sequence', title: 'Clasificación de vectores', date: '2026-11-15', maxPoints: 5, sequenceCode: '1.2', sequenceActivityId: sequenceActivity.id, requestId: 'variable-levels-create' } });
     const activity = created[0];
-    const rubric = criteria.map((label, index) => ({ id: `sequence:${sequenceActivity.id}:${index + 1}`, label, indicatorId: 'indicator-1', weight: 1, levels }));
+    const rubric = criteria.map((label, index) => ({ id: `sequence:${sequenceActivity.id}:${index + 1}`, label: index===0?'Compara correctamente dirección, sentido y módulo.':label, indicatorId: 'indicator-1', weight: 1, levels: levels.map((level,levelIndex)=>({...level,description:levelIndex===2&&index===0?'Logrado con explicación clara.':level.description})) }));
     const configured = await service.configureActivityEvaluation(owner, { requestId: 'variable-levels-configure', activityId: activity.id, revision: activity.revision, scoringMode: 'rubric', instrument: sequenceActivity.assessmentInstrument.title, indicatorPoints: [{ indicatorId: 'indicator-1', points: 5 }], rubric });
     assert.equal(configured[0].rubric.length, 5);
+    assert.equal(configured[0].rubric[0].label,'Compara correctamente dirección, sentido y módulo.','el docente puede ajustar el criterio importado antes de confirmar la matriz');
+    assert.equal(configured[0].rubric[0].levels[2]?.description,'Logrado con explicación clara.','el docente puede adaptar el descriptor sin romper el vínculo con el anexo');
     assert.deepEqual(configured[0].rubric[0].levels.map(level => level.points), [0, 0.5, 1]);
     assert.equal((await service.bootstrap(owner)).criteriaCatalog.length, 0, 'los criterios del anexo no contaminan el catálogo reutilizable de cuatro niveles');
     const row = (await service.grades(owner, activity.id)).rows[0];
