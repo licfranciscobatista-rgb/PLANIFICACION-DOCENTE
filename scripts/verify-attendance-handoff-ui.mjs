@@ -83,12 +83,26 @@ try {
   assert.equal(rowB.behavior, 7);
   assert.equal(rowB.discipline, 8);
 
+  await page.getByRole('tab', { name: 'Paso 1: asistencia' }).click();
+  await page.getByRole('button', { name: 'Ir a Inicio' }).click();
+  await page.locator('.course-card').filter({ hasText: '5B' }).getByRole('button', { name: 'Asistencia' }).click();
+  await page.locator('input[type="date"]').fill(date);
+  assert.equal(await page.getByRole('tab', { name: 'Paso 1: asistencia' }).getAttribute('aria-selected'), 'true', 'La selección explícita de 5B debe recordarse independientemente de 5A.');
+
   await page.getByRole('button', { name: 'Ir a Inicio' }).click();
   await page.locator('.course-card').filter({ hasText: '5A' }).getByRole('button', { name: 'Asistencia' }).click();
   await page.locator('input[type="date"]').fill(date);
   await page.getByText('Valoración del bloque', { exact: true }).waitFor();
   assert.equal(await page.getByRole('tab', { name: 'Paso 2: participación, comportamiento y disciplina' }).getAttribute('aria-selected'), 'true', 'Volver a 5A debe retomar su segundo formulario.');
   assert.equal(await page.getByLabel(`Participación ${firstA.name}`).inputValue(), '7.5', 'La valoración del primer curso debe seguir visible al regresar.');
+
+  await page.evaluate(key => window.localStorage.removeItem(key), `attendance-mode:${courseA.id}:${date}:1`);
+  await page.getByRole('button', { name: 'Ir a Inicio' }).click();
+  await page.locator('.course-card').filter({ hasText: '5A' }).getByRole('button', { name: 'Asistencia' }).click();
+  await page.locator('input[type="date"]').fill(date);
+  await page.getByText('Valoración del bloque', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('tab', { name: 'Paso 2: participación, comportamiento y disciplina' }).getAttribute('aria-selected'), 'true', 'Una sesión ya impartida debe abrir la valoración aunque no exista preferencia local.');
+  assert.equal(await page.getByLabel(`Participación ${firstA.name}`).inputValue(), '7.5');
   assert.deepEqual(errors, [], 'La interfaz no debe producir errores de navegador ni respuestas 500.');
 
   console.log(JSON.stringify({
@@ -99,7 +113,8 @@ try {
     confirmations: 2,
     behaviorFormsOpened: 2,
     ratingValuesVerifiedInDatabase: 6,
-    switchingCoursesRestoresCorrectForm: true,
+    switchingCoursesRestoresPerCoursePreference: true,
+    confirmedSessionsDefaultToBehaviorForm: true,
     browserErrors: errors.length,
   }, null, 2));
 } finally {

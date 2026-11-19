@@ -114,7 +114,7 @@ function AttendanceCapture({initial,courseCode,today,onReload,mode}:{initial:Att
   const completedAssessmentCount=assessmentDraft.value.rows.filter(r=>{const attendance=attendanceDraft.value.rows.find(item=>item.studentId===r.studentId);return (attendance?.status==='P'||attendance?.status==='T')&&r.participation!==null&&r.behavior!==null&&r.discipline!==null;}).length;
   useEffect(()=>{
     if(initial.session.status!=='impartida')return;
-    try{if(window.localStorage.getItem(captureModeKey)==='behavior')setCaptureMode('behavior');}catch{}
+    try{setCaptureMode(window.localStorage.getItem(captureModeKey)==='attendance'?'attendance':'behavior');}catch{setCaptureMode('behavior');}
   },[captureModeKey,initial.session.status]);
   function attendanceRow(id:string,patch:Partial<AttendanceView['rows'][number]>){attendanceDraft.set({...attendanceDraft.value,rows:attendanceDraft.value.rows.map(r=>r.studentId===id?{...r,...patch}:r)});}
   function assessmentRow(id:string,patch:Partial<(typeof assessmentDraft.value.rows)[number]>){assessmentDraft.set({...assessmentDraft.value,rows:assessmentDraft.value.rows.map(r=>r.studentId===id?{...r,...patch}:r)});}
