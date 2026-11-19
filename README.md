@@ -12,7 +12,7 @@ Aplicación para llevar asistencia, comportamiento observado, actividades, calif
 - La vista **Desarrollo de calificaciones** muestra por estudiante el aporte de cada categoría, las evidencias por actividad y el desglose por competencia. En P2, las actividades de secuencia (20 puntos, máximo bruto 85) y la revisión diaria de libreta (20 puntos) se resumen juntas como **Libretas y tareas · 40**, conservando el aporte de cada una.
 - El plan P2 usa 35 puntos de exámenes (15 + 20), 20 de actividades de secuencia, 20 de libreta diaria, 15 de participación/conducta y 10 de prácticas para casa. La distribución de P1 aún necesita reconciliación: `Config_evaluacion` muestra 35/15/20/20/10, mientras la fórmula de `Notas` suma 90 puntos de actividades y añade el examen sobre 10.
 - La base local `teacher-preview-p2-calibrated` contiene una demostración ficticia P1–P4 en los tres cursos. Solo el plan P2 de la demo sigue los pesos del archivo de Matemática; P1, P3 y P4 usan reglas sintéticas para probar el sistema. Los máximos individuales asignados a las nueve actividades de secuencia de la demo también son sintéticos, aunque suman 85. El horario después del 20 de enero de 2027 es sintético y no corresponde a fechas oficiales.
-- Se creó un proyecto nuevo de Neon llamado `registro-docente`, en Ohio, con autenticación por correo y verificación OTP habilitadas. Todavía no se han cargado estudiantes.
+- El proyecto Neon `registro-docente` usa autenticación por correo; `Verify at Sign-up` está desactivado para que los docentes puedan crear y usar su cuenta sin código. Todavía no se han cargado estudiantes.
 - `render.yaml` deja preparada una configuración de Render; aún no hay servicio publicado ni URL real.
 - `render.yaml` usa el plan gratuito. Render suspende el servicio tras un periodo sin tráfico y puede tardar alrededor de un minuto en reactivarlo; la base Neon permanece separada y conserva los datos aunque Render use almacenamiento efímero.
 - En la base de demostración los cuatro períodos aparecen confirmados solo para probar fórmulas y flujo. Eso no confirma los planes reales del año ni modifica la base separada del docente.
@@ -50,7 +50,7 @@ El smoke test usa exclusivamente la lista ficticia local y revisa los tres curso
 - La identidad de cada estudiante usa un identificador estable del curso; cambiar entre cursos no reasigna notas ni asistencia.
 - Los registros de asistencia, las actividades y las notas se guardan por separado y generan historial.
 - Los campos vacíos no se convierten en cero. Guardar una calificación no cambia si se impartió la clase.
-- Cada cuenta con correo verificado obtiene un espacio de trabajo propio, identificado por el ID de su sesión.
+- Cada cuenta obtiene un espacio de trabajo propio, identificado por el ID de su sesión; la aplicación no exige verificar el correo.
 - Las conexiones de base de datos y el secreto de cookies no se guardan en el repositorio.
 
 ## Variables para producción
@@ -60,6 +60,6 @@ Render solicita las variables privadas al crear el servicio:
 - `DATABASE_URL`: conexión agrupada/pooler de Neon para la aplicación.
 - `MIGRATION_DATABASE_URL`: conexión directa de Neon, sin `-pooler`, para aplicar el esquema antes de cada despliegue.
 - `APP_URL`: URL HTTPS exacta asignada al servicio Render.
-Render genera `NEON_AUTH_COOKIE_SECRET`. `NEON_AUTH_BASE_URL` y `APP_TIMEZONE` ya están en `render.yaml`. `DEMO_MODE` queda desactivado en producción. El registro de nuevas cuentas requiere verificación de correo.
+Render genera `NEON_AUTH_COOKIE_SECRET`. `NEON_AUTH_BASE_URL` y `APP_TIMEZONE` ya están en `render.yaml`. `DEMO_MODE` queda desactivado en producción. La app y Neon permiten registrar cuentas sin un código de verificación; cada sesión mantiene su espacio separado.
 
 La URL directa de Neon da acceso de escritura a la base: se copia desde Neon a los campos privados de Render y no se pega en el código ni en el chat. El despliegue se completa cuando el código esté en un repositorio remoto, se haya escogido el workspace de Render y el docente revise y aplique el plan.

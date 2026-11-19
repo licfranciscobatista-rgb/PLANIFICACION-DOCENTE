@@ -11,9 +11,8 @@ export class AccessError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-export function ownerIdFromSession(session: { user?: { id?: string; emailVerified?: boolean } } | null | undefined) {
+export function ownerIdFromSession(session: { user?: { id?: string } } | null | undefined) {
   if (!session?.user?.id) throw new AccessError(401, 'Inicia sesión para acceder al registro.');
-  if (!session.user.emailVerified) throw new AccessError(403, 'Verifica tu correo antes de acceder a los estudiantes.');
   return session.user.id;
 }
 
