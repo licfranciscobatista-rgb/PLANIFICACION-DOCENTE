@@ -14,11 +14,12 @@ test('el estado respeta fecha y existencia de marcas, incluso cuando todos falta
   assert.equal(sessionStatus('2026-11-14', ['R'], '2026-11-13'), 'programada');
 });
 
-test('la fecha inicial autorizada es el 20 de octubre y las fechas imposibles se rechazan', () => {
+test('la fecha inicial autorizada es el 1 de octubre y las fechas imposibles se rechazan', () => {
+  assert.equal(requireDate('2026-10-01'), '2026-10-01');
   assert.equal(requireDate('2026-10-20'), '2026-10-20');
   assert.equal(requireDate('2027-01-20'), '2027-01-20');
   assert.equal(requireDate('2027-01-21'), '2027-01-21');
-  for (const invalid of ['2026-10-19', '2026-11-31', '2026-02-29', '20/10/2026', 'not-a-date']) {
+  for (const invalid of ['2026-09-30', '2026-11-31', '2026-02-29', '20/10/2026', 'not-a-date']) {
     assert.throws(() => requireDate(invalid), (error: unknown) => error instanceof AppError && error.status === 400, invalid);
   }
 });

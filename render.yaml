@@ -26,5 +26,3 @@ services:
         value: https://ep-curly-fire-bdxf7kuz.neonauth.c-8.us-east-2.aws.neon.tech/registro_docente/auth
       - key: NEON_AUTH_COOKIE_SECRET
         generateValue: true
-      - key: OWNER_EMAIL
-        sync: false

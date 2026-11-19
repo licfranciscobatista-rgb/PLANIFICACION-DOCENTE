@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { DBAdapter } from "./db";
-import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceImportEntry, AttendanceImportRecord, AttendanceImportReceipt, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, DailyAssessmentInput, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, IndicatorUsageRecord, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan } from "./model";
+import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceImportEntry, AttendanceImportRecord, AttendanceImportReceipt, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, DailyAssessmentInput, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, IndicatorUsageRecord, PERIOD_START, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan } from "./model";
 import { payloadHash, plan, requireDate, round, rubricMaximum, rubricScore, sessionStatus, todayInSchool } from "./engine";
 import classCalendar from "./data/class-schedule-2026-27.json";
 import { readPeriodSheet, periodSheetResult, studentPeriodSheet, savePeriodSheetPlan, savePeriodSheetGrades } from './period-sheet';
@@ -448,7 +448,7 @@ export class RegistroService {
    ) slots
    LEFT JOIN class_sessions s ON s.owner_id=$1 AND s.course_id=$2 AND s.session_date=slots.session_date AND s.block=slots.block
    LEFT JOIN attendance a ON a.session_id=s.id AND a.owner_id=$1
-   ORDER BY slots.session_date,slots.block,a.student_id`, [ownerId, courseId, "2026-10-20"]);
+   ORDER BY slots.session_date,slots.block,a.student_id`, [ownerId, courseId, PERIOD_START]);
   type SessionDraft = { id: string; date: string; block: number; scheduled: boolean; lessonType: AttendanceView["session"]["lessonType"]; topic: string; marks: AttendanceRow["status"][]; rows: { studentId: string; status: AttendanceRow["status"]; behavior: number | null; behaviorMax: number | null; comment: string }[] };
   const withdrawnFrom = new Map<string,string>();
   for (const row of result.rows) if (row.student_id && row.status === "R" && !withdrawnFrom.has(str(row.student_id))) withdrawnFrom.set(str(row.student_id),str(row.date));

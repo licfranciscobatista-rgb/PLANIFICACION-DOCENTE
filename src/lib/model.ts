@@ -1,4 +1,4 @@
-export const PERIOD_START = "2026-10-20";
+export const PERIOD_START = "2026-10-01";
 export const PERIOD_END = "2027-01-20";
 export const COURSE_SIZES = { "5A": 21, "5B": 19, "5C": 21 } as const;
 export const CATEGORY_KEYS = ["exam", "participation", "notebook", "sequence", "homework"] as const;

@@ -50,7 +50,7 @@ El smoke test usa exclusivamente la lista ficticia local y revisa los tres curso
 - La identidad de cada estudiante usa un identificador estable del curso; cambiar entre cursos no reasigna notas ni asistencia.
 - Los registros de asistencia, las actividades y las notas se guardan por separado y generan historial.
 - Los campos vacíos no se convierten en cero. Guardar una calificación no cambia si se impartió la clase.
-- El acceso de producción acepta solo la dirección configurada en `OWNER_EMAIL` y exige verificación de correo.
+- Cada cuenta con correo verificado obtiene un espacio de trabajo propio, identificado por el ID de su sesión.
 - Las conexiones de base de datos y el secreto de cookies no se guardan en el repositorio.
 
 ## Variables para producción
@@ -60,8 +60,6 @@ Render solicita las variables privadas al crear el servicio:
 - `DATABASE_URL`: conexión agrupada/pooler de Neon para la aplicación.
 - `MIGRATION_DATABASE_URL`: conexión directa de Neon, sin `-pooler`, para aplicar el esquema antes de cada despliegue.
 - `APP_URL`: URL HTTPS exacta asignada al servicio Render.
-- `OWNER_EMAIL`: correo autorizado del docente.
-
-Render genera `NEON_AUTH_COOKIE_SECRET`. `NEON_AUTH_BASE_URL` y `APP_TIMEZONE` ya están en `render.yaml`. `DEMO_MODE` queda desactivado en producción.
+Render genera `NEON_AUTH_COOKIE_SECRET`. `NEON_AUTH_BASE_URL` y `APP_TIMEZONE` ya están en `render.yaml`. `DEMO_MODE` queda desactivado en producción. El registro de nuevas cuentas requiere verificación de correo.
 
 La URL directa de Neon da acceso de escritura a la base: se copia desde Neon a los campos privados de Render y no se pega en el código ni en el chat. El despliegue se completa cuando el código esté en un repositorio remoto, se haya escogido el workspace de Render y el docente revise y aplique el plan.

@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { ArrowRight, LoaderCircle, Plus, UsersRound } from 'lucide-react';
+import { PERIOD_START } from '@/lib/model';
 import type { Course } from '@/lib/model';
 import { apiPost, errorText } from '@/lib/client';
 import CourseAdministration from './course-administration';
 
-const startDefault='2026-10-20';
+const startDefault=PERIOD_START;
 const endDefault='2027-06-30';
 
 export default function CoursesPanel({courses,onCreated,onChange,onOpenStudents,onSelect}:{courses:Course[];onCreated:(course:Course)=>void;onChange:()=>void;onOpenStudents:(id:string)=>void;onSelect:(id:string)=>void}){
@@ -30,7 +31,7 @@ export default function CoursesPanel({courses,onCreated,onChange,onOpenStudents,
   return <><div className="section-heading"><div><p className="eyebrow">CONFIGURACIÓN INICIAL</p><h1>Cursos</h1><p className="muted">Aquí ves lo que está configurado. Abre la administración de un curso solo cuando necesites cambiar su lista.</p></div><div className="toolbar"><button type="button" className="button secondary" aria-expanded={creating} aria-controls="create-course-form" disabled={busy} onClick={()=>setCreating(!creating)}><Plus size={16}/>{creating?'Cerrar formulario':'Crear curso'}</button></div></div>
     {courses.length>0&&<div className="metrics compact course-summary-metrics"><div className="metric"><span><UsersRound size={16}/> Cursos configurados</span><strong>{courses.length}</strong><small>Listas separadas por curso</small></div><div className="metric"><span>Estudiantes en las listas</span><strong>{totalStudents}</strong><small>{activeStudents} activos</small></div><div className="metric"><span>Listas por completar</span><strong>{courses.filter(course=>course.students.length===0).length}</strong><small>Cursos sin estudiantes cargados</small></div></div>}
     {!creating&&success&&<div className="notice success" role="status">{success}</div>}
-    {creating&&<section id="create-course-form" className="panel course-setup-panel"><form onSubmit={submit}><h2><Plus size={18}/> Crear curso</h2><div className="form-grid"><label>Código del curso<input required maxLength={12} value={code} onChange={event=>setCode(event.target.value.toUpperCase())} placeholder="Ej.: 5A"/></label><label>Nombre visible<input required maxLength={120} value={name} onChange={event=>setName(event.target.value)} placeholder="Ej.: Quinto A · Matemática"/></label><label>Desde<input type="date" required min="2026-10-20" value={startDate} onChange={event=>setStartDate(event.target.value)}/></label><label>Hasta<input type="date" required min={startDate} max="2028-06-30" value={endDate} onChange={event=>setEndDate(event.target.value)}/></label></div>
+    {creating&&<section id="create-course-form" className="panel course-setup-panel"><form onSubmit={submit}><h2><Plus size={18}/> Crear curso</h2><div className="form-grid"><label>Código del curso<input required maxLength={12} value={code} onChange={event=>setCode(event.target.value.toUpperCase())} placeholder="Ej.: 5A"/></label><label>Nombre visible<input required maxLength={120} value={name} onChange={event=>setName(event.target.value)} placeholder="Ej.: Quinto A · Matemática"/></label><label>Desde<input type="date" required min={PERIOD_START} value={startDate} onChange={event=>setStartDate(event.target.value)}/></label><label>Hasta<input type="date" required min={startDate} max="2028-06-30" value={endDate} onChange={event=>setEndDate(event.target.value)}/></label></div>
       <p className="muted course-calendar-note">{hasLoadedCalendar?'Si el rango incluye fechas del calendario de este curso, se cargarán sus sesiones diarias exactas. Los datos precargados llegan hasta el 20 de enero de 2027; no se inventan sesiones posteriores.':'No hay un calendario diario precargado para este código; el curso se creará sin fechas de clase programadas.'}</p>
       <label>Fechas sin clase (opcional)<textarea rows={2} value={noClassText} onChange={event=>setNoClassText(event.target.value)} placeholder="Una fecha por línea: 2026-12-25"/><small>Estas fechas se excluyen del calendario cargado.</small></label>
       {error&&<div className="notice warning" role="alert">{error}</div>}{success&&<div className="notice success">{success}</div>}

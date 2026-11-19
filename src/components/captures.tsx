@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Check, Save, Search, AlertCircle, LoaderCircle, Download, RotateCcw } from 'lucide-react';
-import { COMPETENCY_GROUPS } from '@/lib/model';
+import { COMPETENCY_GROUPS, PERIOD_START } from '@/lib/model';
 import type { Activity, AttendanceMark, AttendanceView, ClassLessonType, Course, CourseRegisterSummary, GradesView, LessonType, SaveReceipt } from '@/lib/model';
 import { apiPost, downloadJson, errorText, useRemote } from '@/lib/client';
 import { AttendanceWorkbookImportPanel } from './attendance-workbook-import';
@@ -39,7 +39,7 @@ function DraftNotice({dirty,stale,onDiscard,onExport}:{dirty:boolean;stale:boole
 }
 export function AttendancePanel({course,today,date,onDateChange,block,onBlockChange}:{course:Course;today:string;date:string;onDateChange:(value:string)=>void;block:number;onBlockChange:(value:number)=>void}){
   const remote=useRemote<AttendanceView>('attendance',{courseId:course.id,date,block});
-  return <><div className="section-heading"><div><p className="eyebrow">REGISTRO DIARIO · {course.code}</p><h1>Registro de la clase</h1><p className="muted">Toma la asistencia y, en el mismo bloque, registra participación y comportamiento.</p></div><div className="toolbar"><label>Fecha<input type="date" min="2026-10-20" value={date||today} onChange={e=>e.target.value&&onDateChange(e.target.value)}/></label><label>Bloque<select value={block} onChange={e=>onBlockChange(Number(e.target.value))}><option value={1}>Bloque 1</option><option value={2}>Bloque 2</option><option value={3}>Bloque 3</option><option value={4}>Bloque 4</option><option value={5}>Bloque 5</option><option value={6}>Bloque 6</option><option value={7}>Bloque 7</option><option value={8}>Bloque 8</option></select></label></div></div>
+  return <><div className="section-heading"><div><p className="eyebrow">REGISTRO DIARIO · {course.code}</p><h1>Registro de la clase</h1><p className="muted">Toma la asistencia y, en el mismo bloque, registra participación y comportamiento.</p></div><div className="toolbar"><label>Fecha<input type="date" min={PERIOD_START} value={date||today} onChange={e=>e.target.value&&onDateChange(e.target.value)}/></label><label>Bloque<select value={block} onChange={e=>onBlockChange(Number(e.target.value))}><option value={1}>Bloque 1</option><option value={2}>Bloque 2</option><option value={3}>Bloque 3</option><option value={4}>Bloque 4</option><option value={5}>Bloque 5</option><option value={6}>Bloque 6</option><option value={7}>Bloque 7</option><option value={8}>Bloque 8</option></select></label></div></div>
   {remote.data?<AttendanceCapture key={course.id+date+block+remote.data.session.revision} initial={remote.data} courseCode={course.code} today={today} onReload={remote.reload} mode="attendance"/>:<Loader error={remote.error}/>}</>;
 }
 export function AttendanceSummaryPanel({course,courses,demo,section}:{course:Course;courses:Course[];demo:boolean;section:'month'|'week'}){
