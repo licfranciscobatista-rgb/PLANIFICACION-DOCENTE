@@ -351,3 +351,52 @@ test('el servicio guarda, valida y calcula una rúbrica fuente de tres niveles s
     await db.close();
   }
 });
+
+test('una matriz de actividad conserva su escala propia de cinco niveles y llega al mismo registro de notas', async () => {
+  const db = await createTestDatabase();
+  try {
+    const service = new RegistroService(db, { demo: true, today: () => '2026-11-15' });
+    const owner = 'activity-specific-five-level-matrix';
+    const bootstrap = await service.bootstrap(owner);
+    const course = bootstrap.courses.find(item => item.code === '5A')!;
+    await service.saveCurriculumSequence(owner, { source: 'manual', sourceName: '', sourceText: '', reviewed: false, planningMode: 'manual', activities: [], indicators: [] });
+
+    const created = (await service.createSharedActivity(owner, {
+      courseIds: [course.id],
+      activity: { category: 'sequence', title: 'Matriz de niveles propios', date: '2026-11-15', maxPoints: 10, scoringMode: 'rubric', rubric: [], requestId: 'activity-five-levels-create' },
+    }))[0]!;
+    const indicatorId = 'manual:indicator-1';
+    const criterionId = `activity:${created.sharedId ?? created.id}:criterion:1`;
+    const levels = [
+      { label: 'Preformal', points: 1, description: 'No identifica el procedimiento.' },
+      { label: 'Receptivo', points: 2, description: 'Reconoce los datos con ayuda.' },
+      { label: 'Resolutivo', points: 3, description: 'Resuelve el ejercicio con apoyo.' },
+      { label: 'Autónomo', points: 4, description: 'Resuelve con procedimiento correcto.' },
+      { label: 'Estratégico', points: 5, description: 'Resuelve, verifica y justifica.' },
+    ];
+    const configured = (await service.configureActivityEvaluation(owner, {
+      requestId: 'activity-five-levels-configure',
+      activityId: created.id,
+      revision: created.revision,
+      scoringMode: 'rubric',
+      instrument: 'Escala de logro de cinco niveles',
+      manualIndicators: [{ id: indicatorId, code: 'I1', label: 'Resuelve y justifica el procedimiento.', competency: 'logico_matematica' }],
+      indicatorPoints: [{ indicatorId, points: 10 }],
+      rubric: [{ id: criterionId, label: 'Resolución y justificación', indicatorId, weight: 2, levels }],
+    }))[0]!;
+
+    assert.deepEqual(configured.rubric[0]?.levels.map(level => [level.label, level.points]), levels.map(level => [level.label, level.points]));
+    assert.equal((await service.bootstrap(owner)).criteriaCatalog.length, 0, 'la escala de esta actividad no altera el catálogo reutilizable');
+    const rows = (await service.grades(owner, created.id)).rows;
+    await service.saveGrades(owner, {
+      requestId: 'activity-five-levels-grade',
+      activityId: created.id,
+      revision: configured.revision,
+      rows: [{ studentId: rows[0]!.studentId, score: null, criterionLevels: { [criterionId]: 4 } }],
+    });
+    const saved = (await service.grades(owner, created.id)).rows.find(item => item.studentId === rows[0]!.studentId);
+    assert.equal(saved?.score, 10, 'el nivel estratégico se escala al máximo de diez de la actividad');
+  } finally {
+    await db.close();
+  }
+});

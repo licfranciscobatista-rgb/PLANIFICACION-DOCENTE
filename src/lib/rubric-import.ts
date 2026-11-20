@@ -15,10 +15,10 @@ export interface ImportedRubricWorkbook {
 
 const maxWorkbookBytes = 25 * 1024 * 1024;
 const levelOrder = [
-  { key: 'insuficiente', label: 'Insuficiente', points: 1 },
-  { key: 'suficiente', label: 'Suficiente', points: 2 },
-  { key: 'bueno', label: 'Bueno', points: 3 },
-  { key: 'excelente', label: 'Excelente', points: 4 },
+  { key: 'insuficiente', label: 'Insuficiente', points: 0 },
+  { key: 'suficiente', label: 'Suficiente', points: 1 },
+  { key: 'bueno', label: 'Bueno', points: 2 },
+  { key: 'excelente', label: 'Excelente', points: 3 },
 ] as const;
 
 function xml(source: string, part: string): Document {

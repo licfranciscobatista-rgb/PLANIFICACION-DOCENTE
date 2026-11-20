@@ -65,7 +65,7 @@ export default function RegistroApp({demo,teacherName='Docente de prueba',teache
      {view==='attendance-summary'&&course&&<AttendanceSummaryPanel course={course} courses={data.courses} section="month" demo={demo}/>}
      {view==='attendance-weekly'&&course&&<AttendanceSummaryPanel course={course} courses={data.courses} section="week" demo={demo}/>}
      {view==='grades'&&course&&<GradesPanel course={course} activities={data.activities.filter(a=>a.period===data.plan.period)} selectedActivityId={gradeActivityId} onOpenActivities={openActivities}/>}
-   {view==='activities'&&<ActivityWorkspace courses={data.courses} activities={data.activities} plan={data.plan} plans={data.plans} curriculumSequence={data.curriculumSequence} period={activityPeriod} section={activitySection} today={data.today} onPeriod={selectActivityPeriod} onSection={setActivitySection} onConfigure={configureActivityPeriod} onChange={boot.reload} onGrade={openActivityGrades}/>}
+   {view==='activities'&&<ActivityWorkspace courses={data.courses} activities={data.activities} plan={data.plan} plans={data.plans} curriculumSequence={data.curriculumSequence} criteriaCatalog={data.criteriaCatalog} period={activityPeriod} section={activitySection} today={data.today} onPeriod={selectActivityPeriod} onSection={setActivitySection} onConfigure={configureActivityPeriod} onChange={boot.reload} onGrade={openActivityGrades}/>}
      {view==='students'&&course&&<StudentPanel course={course} onChange={boot.reload} onOpenAttendance={()=>go('attendance',course.id)}/>}
      {view==='reports'&&course&&<ReportPanel course={course} plan={data.plan}/>}
     {view==='history'&&<HistoryPanel/>}

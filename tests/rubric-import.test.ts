@@ -11,10 +11,10 @@ import type { ImportedRubricCriterion } from '../src/lib/rubric-import';
 import { AppError } from '../src/lib/model';
 
 const expected = [
-  { label: 'Insuficiente', points: 1, description: 'No identifica los vectores.' },
-  { label: 'Suficiente', points: 2, description: 'Los identifica con apoyo.' },
-  { label: 'Bueno', points: 3, description: 'Los clasifica con errores menores.' },
-  { label: 'Excelente', points: 4, description: 'Los clasifica y justifica correctamente.' },
+  { label: 'Insuficiente', points: 0, description: 'No identifica los vectores.' },
+  { label: 'Suficiente', points: 1, description: 'Los identifica con apoyo.' },
+  { label: 'Bueno', points: 2, description: 'Los clasifica con errores menores.' },
+  { label: 'Excelente', points: 3, description: 'Los clasifica y justifica correctamente.' },
 ];
 
 function escapeXml(value: string) {
@@ -95,4 +95,13 @@ test('importa criterios en lote, reimporta sin duplicar y revierte el lote ante 
   const catalog = (await service.bootstrap(owner)).criteriaCatalog;
   assert.equal(catalog.some(row => row.label === newItem.label), false, 'el conflicto debe revertir también los elementos nuevos del lote');
   assert.equal(catalog.filter(row => row.label === item.label).length, 1);
+});
+
+test('actualiza los valores iniciales importados anteriormente de 1–4 a Insuficiente = 0 sin duplicar el criterio', async () => {
+  const legacy = await service.saveEvaluationCriterion(owner, { label: 'Criterio importado anterior', levels: expected.map((level, index) => ({ ...level, points: index + 1 })) });
+  const updated = await service.importEvaluationCriteria(owner, { criteria: [{ label: legacy.label, levels: expected }] });
+  assert.equal(updated.imported, 1);
+  assert.equal(updated.unchanged, 0);
+  assert.equal(updated.criteria[0]?.id, legacy.id, 'la identidad del criterio permanece estable');
+  assert.deepEqual(updated.criteria[0]?.levels.map(level => level.points), [0, 1, 2, 3]);
 });

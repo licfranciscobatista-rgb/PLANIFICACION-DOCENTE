@@ -181,7 +181,7 @@ export class RegistroService {
   const value=parse(criterionSchema,input);await this.ensureOwner(ownerId);
   const labels=value.levels.map(level=>level.label.trim().toLocaleLowerCase());
   const points=value.levels.map(level=>level.points);
-  if(new Set(labels).size!==4||points.some((point,index)=>point!==index+1))throw new AppError(400,"Usa cuatro niveles distintos, ordenados de 1 a 4: Insuficiente, Suficiente, Bueno y Excelente.");
+  if(new Set(labels).size!==4||labels.some((label,index)=>label!==["insuficiente","suficiente","bueno","excelente"][index])||points.some((point,index)=>index>0&&point<=points[index-1]!))throw new AppError(400,"Usa los cuatro niveles del Excel en su orden y con valores crecientes; el valor inicial sugerido para Insuficiente es 0.");
   const levels=value.levels.map((level,index)=>({...level,label:["Insuficiente","Suficiente","Bueno","Excelente"][index],description:level.description.trim()}));
   const id=value.id??randomUUID();
   return this.db.transaction(async tx=>{
@@ -203,30 +203,36 @@ export class RegistroService {
    const key=item.label.trim().toLocaleLowerCase();
    if(seen.has(key))throw new AppError(400,`El libro repite el criterio “${item.label}”.`);
    seen.add(key);
-   if(item.levels.some((level,index)=>level.label.trim()!==expectedLabels[index]||level.points!==index+1||!level.description.trim()))throw new AppError(400,`El criterio “${item.label}” debe tener cuatro descriptores completos en el orden Insuficiente, Suficiente, Bueno y Excelente (1–4).`);
-   return {label:item.label.trim(),levels:item.levels.map((level,index)=>({label:expectedLabels[index],points:index+1,description:level.description.trim()}))};
+   const points=item.levels.map(level=>level.points);
+   if(item.levels.some((level,index)=>level.label.trim()!==expectedLabels[index]||!level.description.trim())||points[0]!==0||points.some((point,index)=>index>0&&point<=points[index-1]!))throw new AppError(400,`El criterio “${item.label}” debe tener cuatro descriptores completos en el orden Insuficiente, Suficiente, Bueno y Excelente; Insuficiente vale 0 y los demás valores deben crecer.`);
+   return {label:item.label.trim(),levels:item.levels.map((level,index)=>({label:expectedLabels[index],points:level.points,description:level.description.trim()}))};
   });
   return this.db.transaction(async tx=>{
-   const prepared:{criterion:EvaluationCriterion;existing:boolean;before:unknown}[]=[];
+   const prepared:{criterion:EvaluationCriterion;existing:boolean;migrateLegacyDefaults:boolean;before:unknown}[]=[];
    for(const item of criteria){
     const result=await tx.query("SELECT id,label,levels,active FROM evaluation_criteria WHERE owner_id=$1 AND lower(label)=lower($2)",[ownerId,item.label]);
     const old=result.rows[0];
     if(old){
      const existingLevels=json<RubricCriterion['levels']>(old.levels,[]);
      const same=str(old.label)===item.label&&JSON.stringify(existingLevels)===JSON.stringify(item.levels);
-     if(!same||!Boolean(old.active))throw new AppError(409,`Ya existe “${item.label}” con otro contenido o retirado. Revísalo antes de importar; no se hicieron cambios.`);
-     prepared.push({criterion:{id:str(old.id),label:str(old.label),levels:existingLevels,active:true},existing:true,before:null});
+     const legacyDefault=existingLevels.length===4&&existingLevels.every((level,index)=>level.label===item.levels[index]?.label&&level.points===index+1&&level.description===item.levels[index]?.description);
+     if((!same&&!legacyDefault)||!Boolean(old.active))throw new AppError(409,`Ya existe “${item.label}” con otro contenido o retirado. Revísalo antes de importar; no se hicieron cambios.`);
+     prepared.push({criterion:{id:str(old.id),label:str(old.label),levels:same?existingLevels:item.levels,active:true},existing:true,migrateLegacyDefaults:!same&&legacyDefault,before:same?null:existingLevels});
     }else{
-     prepared.push({criterion:{id:randomUUID(),...item,active:true},existing:false,before:null});
+     prepared.push({criterion:{id:randomUUID(),...item,active:true},existing:false,migrateLegacyDefaults:false,before:null});
     }
    }
    for(const item of prepared){
-    if(item.existing)continue;
-    await tx.query("INSERT INTO evaluation_criteria(id,owner_id,label,levels,active) VALUES($1,$2,$3,$4::jsonb,true)",[item.criterion.id,ownerId,item.criterion.label,JSON.stringify(item.criterion.levels)]);
+    if(item.existing&&!item.migrateLegacyDefaults)continue;
+    if(item.migrateLegacyDefaults){
+     await tx.query("UPDATE evaluation_criteria SET levels=$3::jsonb,updated_at=now() WHERE owner_id=$1 AND id=$2",[ownerId,item.criterion.id,JSON.stringify(item.criterion.levels)]);
+     await tx.query("DELETE FROM evaluation_criterion_values WHERE owner_id=$1 AND criterion_id=$2",[ownerId,item.criterion.id]);
+    }
+    if(!item.existing)await tx.query("INSERT INTO evaluation_criteria(id,owner_id,label,levels,active) VALUES($1,$2,$3,$4::jsonb,true)",[item.criterion.id,ownerId,item.criterion.label,JSON.stringify(item.criterion.levels)]);
     for(const [index,level] of item.criterion.levels.entries())await tx.query("INSERT INTO evaluation_criterion_values(owner_id,criterion_id,level_position,level_label,points,descriptor) VALUES($1,$2,$3,$4,$5,$6)",[ownerId,item.criterion.id,index+1,level.label,level.points,level.description??""]);
-    await this.log(tx,ownerId,"criterion.imported",item.criterion.id,null,item.criterion);
+    await this.log(tx,ownerId,item.migrateLegacyDefaults?"criterion.imported-defaults.updated":"criterion.imported",item.criterion.id,item.before,item.criterion);
    }
-   return {criteria:prepared.map(item=>item.criterion),imported:prepared.filter(item=>!item.existing).length,unchanged:prepared.filter(item=>item.existing).length};
+   return {criteria:prepared.map(item=>item.criterion),imported:prepared.filter(item=>!item.existing||item.migrateLegacyDefaults).length,unchanged:prepared.filter(item=>item.existing&&!item.migrateLegacyDefaults).length};
   });
  }
 
@@ -742,7 +748,6 @@ export class RegistroService {
       if(!sourceInstrument?.scored||sourceInstrument.kind==="checklist"||!expectedLabel)throw new AppError(400,"Este criterio no pertenece a un instrumento puntuable de la secuencia revisada.");
      }else if(!isActivityCriterion&&!catalog.has(item.id))throw new AppError(400,`El criterio “${item.label}” ya no está en el catálogo activo. Actualiza la selección antes de guardar.`);
      const allocation=allocations.find(row=>row.indicatorId===item.indicatorId);if(!allocation)throw new AppError(400,`El criterio “${item.label}” debe vincularse con uno de los indicadores asignados.`);
-     if(isActivityCriterion){const fixedScale=[["Insuficiente",1],["Suficiente",2],["Bueno",3],["Excelente",4]] as const;const matchesScale=item.levels.length===fixedScale.length&&item.levels.every((level,index)=>level.label===fixedScale[index]![0]&&level.points===fixedScale[index]![1]);if(!matchesScale)throw new AppError(400,"Los criterios de la actividad deben conservar la escala del Excel: Insuficiente 1, Suficiente 2, Bueno 3 y Excelente 4.");}
      const catalogCriterion=catalog.get(item.id);const currentLabel=isSourceCriterion||isActivityCriterion?item.label:catalogCriterion!.label;const currentLevels=isSourceCriterion?item.levels:isActivityCriterion?item.levels:catalogCriterion!.levels;
      if(currentLevels.some(level=>!level.description?.trim()))throw new AppError(400,"Completa los descriptores de cada nivel.");
      return {...item,label:currentLabel,indicator:allocation.label,competency:allocation.competency,weight:item.weight??1,levels:currentLevels.map(level=>({...level,label:level.label.trim(),description:level.description?.trim()??""}))};
