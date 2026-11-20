@@ -239,3 +239,11 @@ html[data-theme="dark"] .activity-flow-kicker{color:#77d0bb}
   html[data-theme="dark"] .monthly-register-legend,
   html[data-theme="dark"] .monthly-register-signature{color:#111!important}
 }
+html[data-theme="dark"] .workflow-fullscreen>.drawer-heading,
+html[data-theme="dark"] .workflow-fullscreen>.sequence-save-actions{background:var(--panel);border-color:var(--line)}
+html[data-theme="dark"] .grading-method-option.selected{background:#23423d;border-color:#68bba8;box-shadow:0 0 0 2px #68bba833;color:#e5edef}
+html[data-theme="dark"] .grading-method-option.selected span{color:#bdd6d0}
+html[data-theme="dark"] .workflow-fullscreen .evaluation-section{background:#192327;border-color:#354449}
+html[data-theme="dark"] .workflow-fullscreen .criterion-level{background:#202d31;border-color:#354449}
+html[data-theme="dark"] .workflow-fullscreen .criterion-level textarea{background:#182327;color:#e5edef;border-color:#405155}
+html[data-theme="dark"] .workflow-fullscreen .rubric-conversion-notice{background:#1d3532;border-color:#31544e;color:#c1ddd5}

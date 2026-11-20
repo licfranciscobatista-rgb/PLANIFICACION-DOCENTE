@@ -197,9 +197,9 @@ export function GradesPanel({course,activities,selectedActivityId,onOpenActiviti
   const remote=useRemote<GradesView>('grades',{activityId:id},Boolean(id));
   return <><div className="section-heading"><div><p className="eyebrow">EVALUACIÓN</p><h1>Calificaciones</h1><p className="muted">Selecciona una actividad ya preparada para registrar sus resultados. Puedes corregirla aunque sea de otro día.</p></div></div>
   {list.length>0&&<div className="panel activity-selector"><label>Actividad preparada<select value={id} onChange={e=>setSelected(e.target.value)}>{list.map(a=><option value={a.id} key={a.id}>{a.date+' · '+(a.sequenceCode?a.sequenceCode+' · ':'')+a.title+' / '+a.maxPoints}</option>)}</select></label><p className="muted">Guardar notas conserva la asistencia y el estado de la clase.</p></div>}
-  {!id?<div className="empty-state"><h2>No hay actividades listas para calificar</h2><p>Una actividad aparece aquí después de asignarla a un período y guardar su valoración. La calificación directa necesita indicadores con puntos; la rúbrica, además, criterios vinculados.</p><button className="button secondary" onClick={onOpenActivities}>Ir a Actividades</button></div>:remote.data?<GradeCapture key={id+remote.data.activity.revision} initial={remote.data} course={course}/>:<Loader error={remote.error}/>}</>;
+   {!id?<div className="empty-state"><h2>No hay actividades listas para calificar</h2><p>Una actividad aparece aquí después de asignarla a un período y guardar su valoración. La calificación directa necesita indicadores con puntos; la rúbrica, además, criterios vinculados.</p><button className="button secondary" onClick={onOpenActivities}>Ir a Actividades</button></div>:remote.data?<GradeCapture key={id+remote.data.activity.revision} initial={remote.data} course={course} onOpenActivities={onOpenActivities}/>:<Loader error={remote.error}/>}</>;
 }
-function GradeCapture({initial,course}:{initial:GradesView;course:Course}){
+function GradeCapture({initial,course,onOpenActivities}:{initial:GradesView;course:Course;onOpenActivities:()=>void}){
   const activity=initial.activity;const draft=useDraft('grades:'+activity.id,initial.rows,activity.revision);
   const [saving,setSaving]=useState(false);const [message,setMessage]=useState('');const [error,setError]=useState('');const [search,setSearch]=useState('');
   function row(id:string,patch:Partial<GradesView['rows'][number]>){draft.set(draft.value.map(r=>r.studentId===id?{...r,...patch}:r));}
@@ -223,6 +223,7 @@ function GradeCapture({initial,course}:{initial:GradesView;course:Course}){
       <div className="metric"><span>Valor de la actividad</span><strong>{activity.maxPoints}<small> puntos</small></strong></div>
       <div className="metric"><span>Instrumento</span><strong className="small-value">{activity.scoringMode==='rubric'?'Rúbrica':'Puntos directos'}</strong></div>
     </div>
+    {activity.scoringMode==='points'&&<div className="notice grade-direct-mode-note"><span>Esta actividad está configurada con puntos directos; por eso aquí no aparecen competencias, indicadores ni niveles de logro.</span><button type="button" className="button secondary" onClick={onOpenActivities}>Cambiar método en Actividades</button></div>}
     <DraftNotice dirty={draft.dirty} stale={draft.stale} onDiscard={draft.discard} onExport={()=>downloadJson('borrador-notas.json',draft.value)}/>
     {activity.scoringMode==='rubric'&&<RubricReference activity={activity} course={course}/>}
     <section className="panel">
@@ -233,7 +234,7 @@ function GradeCapture({initial,course}:{initial:GradesView;course:Course}){
       <fieldset disabled={saving} className="bare-fieldset">
         <div className="table-wrap">
           <table className="data-table grade-capture-table">
-            <thead><tr><th>N.º</th><th>Estudiante</th>{activity.scoringMode==='rubric'&&activity.rubric.map(c=><th key={c.id}><span>{c.label}</span><small className="cell-description">{COMPETENCY_GROUPS.find(g=>g.key===c.competency)?.label??c.indicator??''}</small><details className="grade-criterion-help"><summary>Ver niveles</summary><div>{c.levels.map((item,index)=><p key={`${item.label}-${index}`}><strong>{item.label} · {item.points}</strong>{item.description&&<span>{item.description}</span>}</p>)}</div></details></th>)}<th>Nota final / {activity.maxPoints}</th><th>Porcentaje</th><th>Comentario</th></tr></thead>
+            <thead><tr><th>N.º</th><th>Estudiante</th>{activity.scoringMode==='rubric'&&activity.rubric.map(c=><th key={c.id}><span>{c.label}</span><small className="cell-description">Competencia: {COMPETENCY_GROUPS.find(g=>g.key===c.competency)?.label??c.competency??'Pendiente'}</small><small className="cell-description">Indicador: {c.indicator||activity.indicatorPoints.find(item=>item.indicatorId===c.indicatorId)?.label||'Pendiente'}</small><details className="grade-criterion-help"><summary>Ver niveles</summary><div>{c.levels.map((item,index)=><p key={`${item.label}-${index}`}><strong>{item.label} · {item.points}</strong>{item.description&&<span>{item.description}</span>}</p>)}</div></details></th>)}<th>Nota final / {activity.maxPoints}</th><th>Porcentaje</th><th>Comentario</th></tr></thead>
             <tbody>{draft.value.filter(r=>(r.name+' '+r.number).toLowerCase().includes(search.toLowerCase())).map(r=><tr key={r.studentId}>
               <td className="row-number">{String(r.number).padStart(2,'0')}</td><td className="student-name">{r.name}</td>
               {activity.scoringMode==='rubric'&&activity.rubric.map(c=>{const selected=r.criterionLevels?.[c.id];return <td key={c.id}><select aria-label={c.label+' '+r.name} value={selected??''} onChange={e=>level(r.studentId,c.id,e.target.value)}><option value="">Pendiente</option>{c.levels.map((l,i)=><option key={i} value={i}>{l.label+' ('+l.points+')'}</option>)}</select>{selected!==undefined&&c.levels[selected]?.description&&<small className="selected-level-descriptor">{c.levels[selected].description}</small>}</td>})}
@@ -253,7 +254,7 @@ function GradeCapture({initial,course}:{initial:GradesView;course:Course}){
 function RubricReference({activity,course}:{activity:Activity;course:Course}){
   const order=(activity.rubric[0]?.levels.map((_,index)=>index)??[]).reverse();
   return <section className="panel rubric-reference" aria-label="Matriz completa de criterios y descriptores">
-    <details className="rubric-reference-details">
+    <details className="rubric-reference-details" open>
       <summary><span>Consultar matriz completa y descriptores</span><small>{activity.rubric.length} criterios · {activity.maxPoints} puntos</small></summary>
       <div className="rubric-reference-content">
         <div className="rubric-reference-heading">

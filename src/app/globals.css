@@ -415,3 +415,32 @@ label{display:block;font-size:11px;font-weight:600;color:#637c86}input,select,te
 @media(max-width:900px){.daily-earned-grid{grid-template-columns:repeat(2,minmax(140px,1fr))}}
 @media(max-width:480px){.daily-allocation-fields{grid-template-columns:1fr}.daily-allocation-fields label{display:grid;grid-template-columns:110px auto;align-items:center}.daily-allocation-input{margin:0}.daily-allocation-fields small{grid-column:2}}
 @media(max-width:480px){.daily-earned-grid{grid-template-columns:1fr}}
+
+/* Activity setup and rubric editor use the full workspace instead of a narrow drawer. */
+.workflow-fullscreen-backdrop{justify-content:center;align-items:stretch;padding:0}
+.workflow-fullscreen{flex:0 0 100%;width:100%;max-width:none;height:100dvh;min-width:0;padding:clamp(16px,2.5vw,38px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;border-radius:0;box-shadow:none;animation:fade-in .16s ease-out}
+.workflow-fullscreen>.drawer-heading{position:sticky;z-index:10;top:calc(-1 * clamp(16px,2.5vw,38px));align-items:flex-start;margin:0 auto 18px;padding:10px 0 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.workflow-fullscreen>.drawer-heading>div{min-width:0;max-width:1450px}
+.workflow-fullscreen>.drawer-heading h2{overflow-wrap:anywhere}
+.workflow-fullscreen>.sequence-save-actions{position:sticky;z-index:9;bottom:calc(-1 * clamp(16px,2.5vw,38px));width:100%;margin:18px auto calc(-1 * clamp(16px,2.5vw,38px));padding:13px 0 clamp(16px,2.5vw,38px);border-top:1px solid var(--line);background:var(--panel)}
+.workflow-fullscreen>.drawer-heading,.workflow-fullscreen>.sequence-save-actions,.workflow-fullscreen>.evaluation-section,.workflow-fullscreen>.grading-source,.workflow-fullscreen>.source-instrument-preview,.workflow-fullscreen>.notice,.workflow-fullscreen>.evaluation-criteria-picks,.workflow-fullscreen>.rubric-auto-allocation{max-width:1700px}
+.workflow-fullscreen .evaluation-section,.workflow-fullscreen .selected-rubric-criterion,.workflow-fullscreen .evaluation-criteria-picks,.workflow-fullscreen .criterion-level{min-width:0}
+.workflow-fullscreen .criterion-level-grid{grid-template-columns:repeat(4,minmax(0,1fr));align-items:stretch}
+.workflow-fullscreen .criterion-level textarea{width:100%;min-width:0;min-height:106px;resize:vertical;font-size:11px}
+.workflow-fullscreen .grading-method-option{min-height:96px;padding:16px}
+.workflow-fullscreen .grading-method-option strong{font-size:13px}
+.workflow-fullscreen .grading-method-option span{font-size:11px}
+.workflow-fullscreen .rubric-conversion-notice{display:flex;align-items:center;justify-content:space-between;gap:18px}
+.rubric-conversion-notice>div{display:grid;gap:5px;line-height:1.5}
+.rubric-conversion-notice>div span{font-size:11px}
+.rubric-conversion-notice>.button{flex:none}
+.workflow-fullscreen .rubric-indicator-summary{overflow-wrap:anywhere}
+.workflow-fullscreen form{max-width:1700px;margin-inline:auto}
+.workflow-fullscreen form>.bare-fieldset>label{max-width:1100px}
+.workflow-fullscreen form>.bare-fieldset>.grading-choice-fieldset{max-width:1200px}
+.workflow-fullscreen form>.bare-fieldset>.button.wide{position:sticky;z-index:8;bottom:0;min-height:50px;margin-top:14px;box-shadow:0 -8px 22px color-mix(in srgb,var(--panel) 80%,transparent)}
+.rubric-reference-details[open]>.rubric-reference-content{animation:fade-in .18s ease-out}
+.grade-direct-mode-note{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 14px;font-size:11px;line-height:1.5}
+.grade-direct-mode-note .button{flex:none}
+@media(max-width:900px){.workflow-fullscreen .criterion-level-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.rubric-conversion-notice{align-items:flex-start;flex-direction:column}}
+@media(max-width:600px){.workflow-fullscreen{padding:14px}.workflow-fullscreen>.drawer-heading{top:-14px}.workflow-fullscreen .criterion-level-grid{grid-template-columns:1fr}.workflow-fullscreen .grading-method-options{grid-template-columns:1fr}.workflow-fullscreen>.sequence-save-actions{bottom:-14px;margin-bottom:-14px;padding-bottom:14px}.workflow-fullscreen .sequence-save-actions .button{width:100%}.grade-direct-mode-note{align-items:stretch;flex-direction:column}.grade-direct-mode-note .button{width:100%}}
