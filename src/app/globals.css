@@ -444,3 +444,28 @@ label{display:block;font-size:11px;font-weight:600;color:#637c86}input,select,te
 .grade-direct-mode-note .button{flex:none}
 @media(max-width:900px){.workflow-fullscreen .criterion-level-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.rubric-conversion-notice{align-items:flex-start;flex-direction:column}}
 @media(max-width:600px){.workflow-fullscreen{padding:14px}.workflow-fullscreen>.drawer-heading{top:-14px}.workflow-fullscreen .criterion-level-grid{grid-template-columns:1fr}.workflow-fullscreen .grading-method-options{grid-template-columns:1fr}.workflow-fullscreen>.sequence-save-actions{bottom:-14px;margin-bottom:-14px;padding-bottom:14px}.workflow-fullscreen .sequence-save-actions .button{width:100%}.grade-direct-mode-note{align-items:stretch;flex-direction:column}.grade-direct-mode-note .button{width:100%}}
+
+/* Cuenta del docente: accesible desde su nombre en la barra lateral. */
+.teacher-account{display:flex;align-items:center;gap:10px;flex:1;min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.teacher-account:hover .teacher-account-text strong,.teacher-account.active .teacher-account-text strong{color:#bce3d6}
+.teacher-account:disabled{cursor:default;opacity:.9}
+.teacher-account-text{display:block;min-width:0;flex:1}
+.teacher-account-text strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.teacher-account-text small{display:block;margin-top:3px;color:#83a0a7;font-size:10px}
+.account-page{display:grid;gap:16px;max-width:920px}
+.account-identity-card{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(210px,auto);align-items:center;gap:16px;padding:22px}
+.account-card-icon{display:grid;place-items:center;width:42px;height:42px;border:1px solid var(--line);border-radius:12px;background:var(--teal-pale);color:var(--teal)}
+.account-identity-copy h2,.account-panel-heading h2{margin:0;font-size:17px}
+.account-identity-copy p,.account-panel-heading p.muted{margin:5px 0 0;font-size:11px;line-height:1.55}
+.account-email-value{padding:11px 13px;border:1px solid var(--line);border-radius:9px;background:color-mix(in srgb,var(--panel) 96%,var(--teal) 4%);font-size:12px;font-weight:650;overflow-wrap:anywhere}
+.account-password-card{padding:24px}
+.account-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:20px;border-bottom:1px solid var(--line)}
+.account-panel-heading .eyebrow{margin:0 0 6px}
+.account-password-form{display:grid;gap:18px;padding-top:20px}
+.account-password-form>label{max-width:520px}
+.account-password-form .form-grid{gap:14px}
+.account-form-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:3px}
+.account-form-footer p{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:10px;line-height:1.5}
+.account-form-footer p svg{flex:none;color:var(--teal)}
+.account-form-footer .button{flex:none}
+@media(max-width:700px){.account-identity-card{grid-template-columns:42px minmax(0,1fr);align-items:start}.account-email-value{grid-column:1/-1}.account-password-card{padding:18px}.account-password-form .form-grid{grid-template-columns:1fr}.account-form-footer{align-items:stretch;flex-direction:column-reverse}.account-form-footer .button{width:100%}}
