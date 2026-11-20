@@ -22,6 +22,7 @@ export default function Login({configured}:{configured:boolean}) {
   <label>Correo<input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} required/></label>
   <label>Contraseña<input type="password" autoComplete={mode==='signup'?'new-password':'current-password'} minLength={8} value={password} onChange={e=>setPassword(e.target.value)} required/></label>
   <button className="button primary" disabled={pending}>{pending?'Conectando…':mode==='signup'?'Crear mi acceso':'Entrar al registro'}</button>
+  {mode==='signin' && <a className="text-button" href="/auth/forgot-password">Olvidé mi contraseña</a>}
   <button type="button" className="text-button" onClick={()=>setMode(mode==='signup'?'signin':'signup')}>{mode==='signin'?'Crear el acceso del docente':'Ya tengo mi acceso'}</button>
   </form>}
   {message && <p className="notice" role="status">{message}</p>}<small>Cada cuenta tiene su propio registro y sus propios datos.</small></div></main>;
