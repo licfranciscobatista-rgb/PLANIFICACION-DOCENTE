@@ -191,15 +191,15 @@ function AttendanceCapture({initial,courseCode,today,onReload,mode}:{initial:Att
   </>}
   {error&&<div className="notice warning" role="alert">{error}</div>}{message&&<div className="notice success" role="status"><Check size={17}/>{message}</div>}<p className="footnote">Sin marcas guardadas, un bloque pasado del horario queda como no impartido; fuera del calendario queda no programado. Las valoraciones se guardan por separado y solo incluyen estudiantes presentes o tardíos.</p></>;
 }
-export function GradesPanel({course,activities,selectedActivityId,onOpenActivities}:{course:Course;activities:Activity[];selectedActivityId?:string;onOpenActivities:()=>void}){
+export function GradesPanel({course,activities,selectedActivityId,onOpenActivities,onConfigureActivity}:{course:Course;activities:Activity[];selectedActivityId?:string;onOpenActivities:()=>void;onConfigureActivity:(activityId:string,courseId:string)=>void}){
   const list=activities.filter(a=>a.courseId===course.id&&(a.scoringMode==='rubric'?a.indicatorPoints.length>0&&a.rubric.length>0:Boolean(a.instrument.trim()||a.indicatorPoints.length)));
   const [selected,setSelected]=useState(selectedActivityId||list[0]?.id||'');useEffect(()=>{if(selectedActivityId)setSelected(selectedActivityId);},[selectedActivityId]);const id=list.some(a=>a.id===selected)?selected:list[0]?.id||'';
   const remote=useRemote<GradesView>('grades',{activityId:id},Boolean(id));
   return <><div className="section-heading"><div><p className="eyebrow">EVALUACIÓN</p><h1>Calificaciones</h1><p className="muted">Selecciona una actividad ya preparada para registrar sus resultados. Puedes corregirla aunque sea de otro día.</p></div></div>
   {list.length>0&&<div className="panel activity-selector"><label>Actividad preparada<select value={id} onChange={e=>setSelected(e.target.value)}>{list.map(a=><option value={a.id} key={a.id}>{a.date+' · '+(a.sequenceCode?a.sequenceCode+' · ':'')+a.title+' / '+a.maxPoints}</option>)}</select></label><p className="muted">Guardar notas conserva la asistencia y el estado de la clase.</p></div>}
-   {!id?<div className="empty-state"><h2>No hay actividades listas para calificar</h2><p>Una actividad aparece aquí después de asignarla a un período y guardar su valoración. La calificación directa necesita indicadores con puntos; la rúbrica, además, criterios vinculados.</p><button className="button secondary" onClick={onOpenActivities}>Ir a Actividades</button></div>:remote.data?<GradeCapture key={id+remote.data.activity.revision} initial={remote.data} course={course} onOpenActivities={onOpenActivities}/>:<Loader error={remote.error}/>}</>;
+    {!id?<div className="empty-state"><h2>No hay actividades listas para calificar</h2><p>Una actividad aparece aquí después de asignarla a un período y guardar su valoración. La calificación directa necesita indicadores con puntos; la rúbrica, además, criterios vinculados.</p><button className="button secondary" onClick={onOpenActivities}>Ir a Actividades</button></div>:remote.data?<GradeCapture key={id+remote.data.activity.revision} initial={remote.data} course={course} onOpenActivities={onOpenActivities} onConfigureActivity={onConfigureActivity}/>:<Loader error={remote.error}/>}</>;
 }
-function GradeCapture({initial,course,onOpenActivities}:{initial:GradesView;course:Course;onOpenActivities:()=>void}){
+function GradeCapture({initial,course,onOpenActivities,onConfigureActivity}:{initial:GradesView;course:Course;onOpenActivities:()=>void;onConfigureActivity:(activityId:string,courseId:string)=>void}){
   const activity=initial.activity;const draft=useDraft('grades:'+activity.id,initial.rows,activity.revision);
   const [saving,setSaving]=useState(false);const [message,setMessage]=useState('');const [error,setError]=useState('');const [search,setSearch]=useState('');
   function row(id:string,patch:Partial<GradesView['rows'][number]>){draft.set(draft.value.map(r=>r.studentId===id?{...r,...patch}:r));}
@@ -223,7 +223,7 @@ function GradeCapture({initial,course,onOpenActivities}:{initial:GradesView;cour
       <div className="metric"><span>Valor de la actividad</span><strong>{activity.maxPoints}<small> puntos</small></strong></div>
       <div className="metric"><span>Instrumento</span><strong className="small-value">{activity.scoringMode==='rubric'?'Rúbrica':'Puntos directos'}</strong></div>
     </div>
-    {activity.scoringMode==='points'&&<div className="notice grade-direct-mode-note"><span>Esta actividad está configurada con puntos directos; por eso aquí no aparecen competencias, indicadores ni niveles de logro.</span><button type="button" className="button secondary" onClick={onOpenActivities}>Cambiar método en Actividades</button></div>}
+    {activity.scoringMode==='points'&&<div className="notice grade-direct-mode-note"><span>Esta actividad está configurada con puntos directos; por eso aquí no aparecen competencias, indicadores ni niveles de logro.</span><button type="button" className="button secondary" onClick={()=>onConfigureActivity(activity.id,course.id)}>Configurar esta actividad por competencias</button></div>}
     <DraftNotice dirty={draft.dirty} stale={draft.stale} onDiscard={draft.discard} onExport={()=>downloadJson('borrador-notas.json',draft.value)}/>
     {activity.scoringMode==='rubric'&&<RubricReference activity={activity} course={course}/>}
     <section className="panel">
