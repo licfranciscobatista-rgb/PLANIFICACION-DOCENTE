@@ -38,6 +38,32 @@ async function workbook(){
  return zip.generateAsync({type:'uint8array'});
 }
 
+async function attendanceMatrixWorkbook(){
+ const zip=new JSZip();
+ const rows=[
+  ['','','','','','','','','',''],
+  ['Curso','5A','','','','','','','',''],
+  ['Mes','','','','','','','','OCTUBRE 2026','OCTUBRE 2026'],
+  ['Fecha','','','','','','','','2026-10-21','2026-10-22'],
+  ['Bloque','','','','','','','','2','3'],
+  ['No.','Estudiante','P','A','T','E','R','Marcadas','Asistencia','Asistencia'],
+  ['1','Ana Pérez','','','','','','','P',''],
+  ['2','Luis Mateo','','','','','','','A','T'],
+ ];
+ const strings=[...new Set(rows.flat().filter(Boolean))];
+ const columnName=(column:number)=>{let n=column,result='';while(n){const digit=(n-1)%26;result=String.fromCharCode(65+digit)+result;n=Math.floor((n-1)/26);}return result;};
+ const xmlRows=rows.map((row,rowIndex)=>`<row r="${rowIndex+1}">${row.map((value,columnIndex)=>{
+  if(!value)return '';
+  const ref=`${columnName(columnIndex+1)}${rowIndex+1}`;
+  return `<c r="${ref}" t="s"><v>${strings.indexOf(value)}</v></c>`;
+ }).join('')}</row>`).join('');
+ zip.file('xl/worksheets/sheet1.xml',`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${xmlRows}</sheetData></worksheet>`);
+ zip.file('xl/workbook.xml','<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="5A" sheetId="1" r:id="rId1"/></sheets></workbook>');
+ zip.file('xl/_rels/workbook.xml.rels','<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+ zip.file('xl/sharedStrings.xml',`<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${strings.map(value=>`<si><t>${escapeXml(value)}</t></si>`).join('')}</sst>`);
+ return zip.generateAsync({type:'uint8array'});
+}
+
 test('reconoce hoja oculta, fecha Excel, curso/bloque y no convierte celdas dudosas o vacías en ausencias',async()=>{
  const bytes=await workbook();
  const sheets=await inspectAttendanceWorkbook(bytes);
@@ -53,6 +79,24 @@ test('reconoce hoja oculta, fecha Excel, curso/bloque y no convierte celdas dudo
  assert.ok(parsed.records[3]!.issues.includes('fecha_ambigua_o_invalida'));
  assert.ok(parsed.records[4]!.issues.includes('sin_marca'));
  assert.ok(parsed.records[5]!.issues.includes('marca_no_reconocida'));
+});
+
+test('reconoce matriz visual por estudiante, toma fecha y bloque de los encabezados y convierte sus columnas en marcas',async()=>{
+ const bytes=await attendanceMatrixWorkbook();
+ const sheets=await inspectAttendanceWorkbook(bytes);
+ assert.equal(sheets.length,1);
+ assert.equal(sheets[0]!.format,'attendance_matrix');
+ assert.equal(sheets[0]!.courseCode,'5A');
+ assert.equal(sheets[0]!.rowCount,2);
+ assert.equal(sheets[0]!.sessionCount,2);
+ const parsed=await parseAttendanceWorkbookSheet(bytes,'5A');
+ assert.deepEqual(parsed.records.map(row=>[row.sourceCourse,row.sourceStudentName,row.date,row.block,row.status]),[
+  ['5A','Ana Pérez','2026-10-21',2,'P'],
+  ['5A','Ana Pérez','2026-10-22',3,null],
+  ['5A','Luis Mateo','2026-10-21',2,'A'],
+  ['5A','Luis Mateo','2026-10-22',3,'T'],
+ ]);
+ assert.ok(parsed.records[1]!.issues.includes('sin_marca'));
 });
 
 const owner=`attendance-import-${randomUUID()}`;

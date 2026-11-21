@@ -5,7 +5,7 @@ import { AlertTriangle, Check, FileSpreadsheet, LoaderCircle, RotateCcw, ShieldC
 import type { AttendanceImportEntry, AttendanceImportPreview, AttendanceImportReceipt, Course } from '@/lib/model';
 import { useRemote } from '@/lib/client';
 
-type Candidate = { name: string; state: 'visible'|'hidden'|'veryHidden'; headerRow: number; rowCount: number; format: 'row_table'; confidence: 'high'|'review'; columns: {index:number;letter:string;header:string;field:string|null}[] };
+type Candidate = { name: string; state: 'visible'|'hidden'|'veryHidden'; headerRow: number; rowCount: number; format: 'row_table'|'attendance_matrix'; confidence: 'high'|'review'; courseCode?:string; sessionCount?:number; columns: {index:number;letter:string;header:string;field:string|null}[] };
 type Inspection = { fileName:string; sourceFingerprint:string; candidates:Candidate[] };
 type Issue = {sheet:string;row:number;student:string;code:string;message:string;severity:'review'|'blocked'};
 type ImportPreview = {fileName:string;sourceFingerprint:string;sheet:Candidate;fileSummary:{sourceSheet:string;sourceRows:number;blankRows:number;duplicateRows:number;conflictingDuplicates:number;otherCourseRows:number;incompleteSessions:number;blockedRows:number;reviewRows:number};issues:Issue[];review:AttendanceImportPreview|null};
@@ -40,7 +40,7 @@ export function AttendanceWorkbookImportPanel({course,courses,onChange}:{course:
   const [success,setSuccess]=useState('');
   const imports=useRemote<Batch[]>('attendance-imports');
   const selectedCandidate=inspection?.candidates.find(candidate=>candidate.name===sheetName)??null;
-  const needsBlock=Boolean(selectedCandidate&&!selectedCandidate.columns.some(column=>column.field==='block'));
+  const needsBlock=Boolean(selectedCandidate&&selectedCandidate.format!=='attendance_matrix'&&!selectedCandidate.columns.some(column=>column.field==='block'));
   const conflicts=preview?.review?.entries.filter(entry=>entry.outcome==='conflict')??[];
   const withdrawalEntries=preview?.review?.entries.filter(entry=>entry.status==='R'&&(entry.outcome==='new'||(entry.outcome==='conflict'&&replaceConflicts)))??[];
   const importable=preview?.review?preview.review.entries.filter(entry=>entry.outcome==='new'||(entry.outcome==='conflict'&&replaceConflicts)).filter(entry=>entry.status!=='R'||confirmWithdrawals).length??0:0;
@@ -50,7 +50,12 @@ export function AttendanceWorkbookImportPanel({course,courses,onChange}:{course:
     if(!file){setError('Selecciona el Excel con la asistencia.');return;}
     if(file.size>25*1024*1024){setError('El libro supera el límite de 25 MB.');return;}
     setBusy(true);setError('');setSuccess('');setInspection(null);setPreview(null);setConfirmImport(false);
-    try{const result=await sendWorkbook<Inspection>(file,{mode:'inspect'});setInspection(result);setSheetName(result.candidates.length===1?result.candidates[0]!.name:'');}
+    try{
+      const result=await sendWorkbook<Inspection>(file,{mode:'inspect'});setInspection(result);
+      const preferred=result.candidates.find(candidate=>candidate.format==='attendance_matrix'&&candidate.courseCode?.replace(/\s+/g,'').toLocaleUpperCase()===course.code.replace(/\s+/g,'').toLocaleUpperCase())??(result.candidates.length===1?result.candidates[0]:undefined);
+      setSheetName(preferred?.name??'');
+      if(preferred?.courseCode){const matchingCourse=courses.find(item=>item.code.replace(/\s+/g,'').toLocaleUpperCase()===preferred.courseCode!.replace(/\s+/g,'').toLocaleUpperCase());if(matchingCourse)setDefaultCourseId(matchingCourse.id);}
+    }
     catch(cause){setError(cause instanceof Error?cause.message:'No se pudo analizar el Excel.');}
     finally{setBusy(false);}
   }
@@ -93,20 +98,20 @@ export function AttendanceWorkbookImportPanel({course,courses,onChange}:{course:
   const summaries=preview?.review?.summary;
   const issues=preview?.issues??[];
   const visibleIssues=issues.slice(0,30);
-  const hasCourseColumn=Boolean(selectedCandidate?.columns.some(column=>column.field==='course'));
-  const hasBlockColumn=Boolean(selectedCandidate?.columns.some(column=>column.field==='block'));
+  const hasCourseColumn=Boolean(selectedCandidate&&(selectedCandidate.format==='attendance_matrix'||selectedCandidate.columns.some(column=>column.field==='course')));
+  const hasBlockColumn=Boolean(selectedCandidate&&(selectedCandidate.format==='attendance_matrix'||selectedCandidate.columns.some(column=>column.field==='block')));
 
   return <details className="panel roster-workbook-import" open={open} onToggle={event=>setOpen(event.currentTarget.open)}>
     <summary className="roster-workbook-summary"><div><p className="eyebrow">ASISTENCIA · MIGRAR HISTÓRICO</p><h2><FileSpreadsheet size={18}/> Importar desde Excel</h2><p>Sube varios meses de marcas y revisa cómo se relacionan antes de guardarlas.</p></div><span className="button secondary">{open?'Cerrar':'Revisar Excel'}</span></summary>
     <div className="roster-workbook-body">
       <div className="notice"><ShieldCheck size={17}/><span>El Excel se trata como propuesta. No se ejecutan macros, no se importan notas ni comportamiento y las marcas existentes no se reemplazan sin una decisión explícita.</span></div>
       <div className="roster-workbook-controls"><label htmlFor={fileId}>Libro Excel (.xlsx o .xlsm)<input id={fileId} type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" disabled={busy} onChange={event=>{setFile(event.target.files?.[0]??null);setInspection(null);setPreview(null);setError('');setSuccess('');setConfirmImport(false);}}/></label><button type="button" className="button secondary" onClick={()=>void inspect()} disabled={busy||!file}>{busy?<LoaderCircle className="spin" size={16}/>:<Upload size={16}/>} Analizar estructura</button></div>
-      {inspection&&<div className="roster-workbook-controls"><label>Pestaña con asistencia<select value={sheetName} onChange={event=>{setSheetName(event.target.value);setPreview(null);setConfirmImport(false);}}><option value="">Selecciona una tabla</option>{inspection.candidates.map(candidate=><option value={candidate.name} key={candidate.name}>{candidate.name}{candidate.state!=='visible'?' · oculta':''} · {candidate.rowCount} filas</option>)}</select></label>
-        <label>Asignar filas sin curso a<select value={defaultCourseId} onChange={event=>{setDefaultCourseId(event.target.value);setPreview(null);}}>{courses.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label>
-        <label>Bloque de respaldo para filas sin bloque<select value={defaultBlock} onChange={event=>{setDefaultBlock(event.target.value);setPreview(null);}}><option value="">No completar automáticamente</option>{Array.from({length:12},(_,index)=>index+1).map(block=><option value={block} key={block}>Bloque {block}</option>)}</select></label>
+      {inspection&&<div className="roster-workbook-controls"><label>Pestaña con asistencia<select value={sheetName} onChange={event=>{const name=event.target.value;const candidate=inspection.candidates.find(item=>item.name===name);setSheetName(name);setPreview(null);setConfirmImport(false);if(candidate?.courseCode){const matchingCourse=courses.find(item=>item.code.replace(/\s+/g,'').toLocaleUpperCase()===candidate.courseCode!.replace(/\s+/g,'').toLocaleUpperCase());if(matchingCourse)setDefaultCourseId(matchingCourse.id);}}}><option value="">Selecciona una tabla</option>{inspection.candidates.map(candidate=><option value={candidate.name} key={candidate.name}>{candidate.name}{candidate.state!=='visible'?' · oculta':''}{candidate.format==='attendance_matrix'?` · matriz · ${candidate.rowCount} estudiantes · ${candidate.sessionCount??0} clases`:` · ${candidate.rowCount} filas`}</option>)}</select></label>
+        {selectedCandidate?.format!=='attendance_matrix'&&<label>Asignar filas sin curso a<select value={defaultCourseId} onChange={event=>{setDefaultCourseId(event.target.value);setPreview(null);}}>{courses.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label>}
+        {selectedCandidate?.format!=='attendance_matrix'&&<label>Bloque de respaldo para filas sin bloque<select value={defaultBlock} onChange={event=>{setDefaultBlock(event.target.value);setPreview(null);}}><option value="">No completar automáticamente</option>{Array.from({length:12},(_,index)=>index+1).map(block=><option value={block} key={block}>Bloque {block}</option>)}</select></label>}
         <button type="button" className="button primary" onClick={()=>void analyze()} disabled={busy||!sheetName}>{busy?<LoaderCircle className="spin" size={16}/>:<FileSpreadsheet size={16}/>} Revisar marcas</button>
       </div>}
-      {selectedCandidate&&<p className="muted roster-workbook-note">Encabezado detectado en fila {selectedCandidate.headerRow}: {selectedCandidate.columns.map(column=>`${column.letter} · ${column.header}`).join(' / ')}. {hasCourseColumn?'La app usará el código de curso escrito en cada fila; los códigos desconocidos se bloquearán.':'La hoja no trae curso; se asignará explícitamente al curso seleccionado.'} {hasBlockColumn?'Se usará el bloque de cada fila; cualquier fila sin bloque queda pendiente, salvo que elijas un respaldo.':'El bloque necesita confirmación explícita.'} Las celdas vacías no se convierten en ausencias.</p>}
+      {selectedCandidate&&<p className="muted roster-workbook-note">{selectedCandidate.format==='attendance_matrix'?`Matriz detectada: ${selectedCandidate.rowCount} estudiantes, ${selectedCandidate.sessionCount??0} clases. Curso ${selectedCandidate.courseCode??'por asignar'}; fecha y bloque se leen de los encabezados sobre cada columna.`:`Encabezado detectado en fila ${selectedCandidate.headerRow}: ${selectedCandidate.columns.map(column=>`${column.letter} · ${column.header}`).join(' / ')}. ${hasCourseColumn?'La app usará el código de curso escrito en cada fila; los códigos desconocidos se bloquearán.':'La hoja no trae curso; se asignará explícitamente al curso seleccionado.'} ${hasBlockColumn?'Se usará el bloque de cada fila; cualquier fila sin bloque queda pendiente, salvo que elijas un respaldo.':'El bloque necesita confirmación explícita.'}`} Las celdas vacías no se convierten en ausencias.</p>}
       {error&&<div className="notice warning" role="alert"><AlertTriangle size={17}/>{error}</div>}
       {success&&<div className="notice success" role="status"><Check size={17}/>{success}</div>}
 

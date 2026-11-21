@@ -18,8 +18,10 @@ export interface AttendanceImportSheet {
   headerRow: number;
   rowCount: number;
   columns: AttendanceImportColumn[];
-  format: 'row_table';
+  format: 'row_table' | 'attendance_matrix';
   confidence: 'high' | 'review';
+  courseCode?: string;
+  sessionCount?: number;
 }
 
 export interface ParsedAttendanceRecord {
@@ -39,6 +41,18 @@ interface SheetXml {
   name: string;
   state: 'visible' | 'hidden' | 'veryHidden';
   rows: Map<number, Map<number, string>>;
+}
+
+interface MatrixSession { column: number; date: string; block: number }
+interface AttendanceMatrixLayout {
+  sheet: AttendanceImportSheet;
+  dateRow: number;
+  blockRow: number;
+  studentColumn: number;
+  studentNumberColumn: number | null;
+  courseCode: string;
+  sessions: MatrixSession[];
+  studentRows: number[];
 }
 
 function xml(source: string, name: string): Document {
@@ -178,9 +192,58 @@ function detectHeader(sheet: SheetXml): AttendanceImportSheet | null {
   return { name: sheet.name, state: sheet.state, headerRow: selected.row, rowCount, columns: headerColumns, format: 'row_table', confidence };
 }
 
+function findAttendanceMatrix(sheet: SheetXml, date1904: boolean): AttendanceMatrixLayout | null {
+  const rows = [...sheet.rows.entries()].sort(([a], [b]) => a - b);
+  for (const [headerRow, headerCells] of rows) {
+    const nameEntry = [...headerCells].find(([, value]) => fieldForHeader(value) === 'studentName');
+    if (!nameEntry) continue;
+    const [studentColumn] = nameEntry;
+    const studentNumberColumn = [...headerCells].find(([, value]) => fieldForHeader(value) === 'studentNumber')?.[0] ?? null;
+    const dateEntry = rows.find(([rowNumber, cells]) => rowNumber < headerRow && normalize(cells.get(1) ?? '') === 'fecha');
+    const blockEntry = rows.find(([rowNumber, cells]) => rowNumber < headerRow && normalize(cells.get(1) ?? '') === 'bloque');
+    if (!dateEntry || !blockEntry) continue;
+    const [dateRow, dateCells] = dateEntry;
+    const [blockRow, blockCells] = blockEntry;
+    const sessions: MatrixSession[] = [];
+    for (const [column, rawDate] of dateCells) {
+      if (column <= studentColumn) continue;
+      const date = parseDate(rawDate, date1904);
+      const rawBlock = blockCells.get(column) ?? '';
+      const block = Number(rawBlock);
+      if (date && Number.isInteger(block) && block >= 1 && block <= 12) sessions.push({ column, date, block });
+    }
+    if (!sessions.length) continue;
+    const studentRows = rows
+      .filter(([rowNumber, cells]) => rowNumber > headerRow && Boolean(cells.get(studentColumn)?.trim()))
+      .map(([rowNumber]) => rowNumber);
+    if (!studentRows.length) continue;
+
+    let courseCode = '';
+    for (const [rowNumber, cells] of rows) {
+      if (rowNumber >= headerRow) break;
+      const courseColumn = [...cells].find(([, value]) => normalize(value) === 'curso')?.[0];
+      if (courseColumn === undefined) continue;
+      courseCode = [...cells].find(([column, value]) => column > courseColumn && Boolean(value.trim()))?.[1] ?? '';
+      if (courseCode) break;
+    }
+    if (!courseCode && /^\s*\d+\s*[A-Z]\s*$/i.test(sheet.name)) courseCode = sheet.name.replace(/\s+/g, '').toLocaleUpperCase();
+    const visibleColumns: AttendanceImportColumn[] = [{ index: studentColumn, letter: columnLetter(studentColumn), header: nameEntry[1], field: 'studentName' }];
+    if (studentNumberColumn !== null) visibleColumns.unshift({ index: studentNumberColumn, letter: columnLetter(studentNumberColumn), header: headerCells.get(studentNumberColumn) ?? 'No.', field: 'studentNumber' });
+    return {
+      sheet: {
+        name: sheet.name, state: sheet.state, headerRow, rowCount: studentRows.length,
+        columns: visibleColumns, format: 'attendance_matrix', confidence: courseCode ? 'high' : 'review',
+        ...(courseCode ? { courseCode } : {}), sessionCount: sessions.length,
+      },
+      dateRow, blockRow, studentColumn, studentNumberColumn, courseCode, sessions, studentRows,
+    };
+  }
+  return null;
+}
+
 export async function inspectAttendanceWorkbook(input: ArrayBuffer | Uint8Array): Promise<AttendanceImportSheet[]> {
-  const { sheets } = await readWorkbook(input);
-  const candidates = sheets.map(detectHeader).filter((item): item is AttendanceImportSheet => Boolean(item));
+  const { sheets, date1904 } = await readWorkbook(input);
+  const candidates = sheets.map(sheet => detectHeader(sheet) ?? findAttendanceMatrix(sheet, date1904)?.sheet ?? null).filter((item): item is AttendanceImportSheet => Boolean(item));
   if (!candidates.length) throw new Error('No encontré una tabla donde cada fila tenga estudiante, fecha y marca de asistencia. Si tu libro usa días como columnas, primero hay que mapear ese formato.');
   return candidates;
 }
@@ -188,6 +251,8 @@ export async function inspectAttendanceWorkbook(input: ArrayBuffer | Uint8Array)
 function parseDate(value: string, date1904: boolean): string | null {
   const trimmed = value.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return validDate(trimmed) ? trimmed : null;
+  const isoDateTime = trimmed.match(/^(\d{4}-\d{2}-\d{2})T/);
+  if (isoDateTime) return validDate(isoDateTime[1]!) ? isoDateTime[1]! : null;
   const slash = trimmed.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);
   if (slash) {
     const first = Number(slash[1]), second = Number(slash[2]);
@@ -231,6 +296,29 @@ export async function parseAttendanceWorkbookSheet(input: ArrayBuffer | Uint8Arr
   const { sheets, date1904 } = await readWorkbook(input);
   const source = sheets.find(item => item.name === sheetName);
   if (!source) throw new Error('La pestaña seleccionada no aparece en el libro que se está importando.');
+  const matrix = findAttendanceMatrix(source, date1904);
+  if (matrix) {
+    const records: ParsedAttendanceRecord[] = [];
+    for (const sourceRow of matrix.studentRows) {
+      const cells = source.rows.get(sourceRow)!;
+      const sourceStudentName = cells.get(matrix.studentColumn)?.trim() ?? '';
+      const rawNumber = matrix.studentNumberColumn === null ? '' : cells.get(matrix.studentNumberColumn)?.trim() ?? '';
+      const parsedNumber = Number(rawNumber);
+      for (const session of matrix.sessions) {
+        const mark = parseMark(cells.get(session.column) ?? '');
+        const issues: string[] = [];
+        if (mark === 'invalid') issues.push('marca_no_reconocida');
+        if (mark === null) issues.push('sin_marca');
+        records.push({
+          sourceSheet: source.name, sourceRow, sourceCourse: matrix.courseCode,
+          sourceStudentId: '', sourceStudentNumber: Number.isInteger(parsedNumber) && parsedNumber > 0 ? parsedNumber : null,
+          sourceStudentName, date: session.date, block: session.block,
+          status: mark === 'invalid' || mark === null ? null : mark, issues,
+        });
+      }
+    }
+    return { sheet: matrix.sheet, records };
+  }
   const sheet = detectHeader(source);
   if (!sheet) throw new Error(`No pude reconocer una tabla de asistencia en «${sheetName}».`);
   const fieldColumns = new Map(sheet.columns.map(column => [column.field!, column.index]));
