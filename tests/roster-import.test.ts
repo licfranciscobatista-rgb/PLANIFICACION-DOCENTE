@@ -12,11 +12,11 @@ import classCalendar from '../src/lib/data/class-schedule-2026-27.json';
 
 function escapeXml(value: string) { return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 
-async function rosterWorkbook({ duplicateName = false } = {}) {
+async function rosterWorkbook({ duplicateName = false, duplicateNumber = false, aliases = false, secondaryTable = false } = {}) {
   const zip = new JSZip();
   const rows = {
-    '5A': [['ID', 'Estudiante'], ['1', 'Ana Pérez'], ['2', duplicateName ? 'Ana Perez' : 'Luis Mateo']],
-    '5B': [['ID', 'Estudiante'], ['1', 'Beatriz Díaz']],
+    '5A': [['ID', 'Estudiante'], ['1', 'Ana Pérez'], [duplicateNumber ? '1' : '2', duplicateName ? 'Ana Perez' : 'Luis Mateo']],
+    '5B': [['ID', 'Estudiante'], ['1', 'Beatriz Díaz'], ...(secondaryTable ? [[], ['1', 'Jordaens · actividad']] : [])],
     '5C': [['No.', 'Nombre'], ['1', 'Carlos Gil']],
   };
   const strings = [...new Set(Object.values(rows).flat(2))];
@@ -27,7 +27,8 @@ async function rosterWorkbook({ duplicateName = false } = {}) {
       return `<c r="${column}${rowIndex + 1}" t="s"><v>${strings.indexOf(value)}</v></c>`;
     }).join('')}</row>`).join('');
     zip.file(`xl/worksheets/sheet${sheetIndex + 1}.xml`, `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`);
-    return `<sheet name="${name}" sheetId="${sheetIndex + 1}" state="hidden" r:id="rId${sheetIndex + 1}"/>`;
+    const sheetName = aliases ? `Quinto ${name.slice(-1)}` : name;
+    return `<sheet name="${sheetName}" sheetId="${sheetIndex + 1}" state="hidden" r:id="rId${sheetIndex + 1}"/>`;
   }).join('');
   const relationships = Object.keys(rows).map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join('');
   zip.file('xl/workbook.xml', `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheetXml}</sheets></workbook>`);
@@ -49,6 +50,14 @@ test('lee las pestañas de cada curso y mantiene la identidad si cambia el orden
 test('rechaza hojas faltantes y nombres duplicados que no se pueden emparejar de forma segura', async () => {
   await assert.rejects(parseRosterWorkbook(await rosterWorkbook(), ['5A', '5B', '5D']), /No encontré una pestaña/);
   await assert.rejects(parseRosterWorkbook(await rosterWorkbook({ duplicateName: true }), ['5A', '5B', '5C']), /repite el nombre/);
+  await assert.rejects(parseRosterWorkbook(await rosterWorkbook({ duplicateNumber: true }), ['5A', '5B', '5C']), /repite el número de lista/);
+});
+
+test('reconoce pestañas Quinto A/B/C y no mezcla tablas separadas debajo de la nómina', async () => {
+  const parsed = await parseRosterWorkbook(await rosterWorkbook({ aliases: true, secondaryTable: true }), ['5A', '5B', '5C']);
+  assert.deepEqual(parsed.courses.map(course => [course.courseCode, course.rows.length]), [['5A', 2], ['5B', 1], ['5C', 1]]);
+  assert.equal(parsed.courses[1]?.sheetName, 'Quinto B');
+  assert.deepEqual(parsed.courses[1]?.rows.map(row => row.name), ['Beatriz Díaz']);
 });
 
 const root = path.resolve('.local');

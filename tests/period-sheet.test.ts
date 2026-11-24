@@ -51,6 +51,85 @@ test('partes libres con y sin fecha acumulan hasta 100 sin normalizar ni duplica
  assert.equal((await service.periodSheet(owner,'P2',course.id)).rows[0].result.total,90);
 });
 
+test('las capturas directas de varias categorías se integran al mismo libro sin duplicar sus actividades',async()=>{
+ const {owner,course,students}=await fixture();
+ const exam={...column('Examen directo',35),category:'exam'},notebook={...column('Nota global de libreta',20),category:'notebook'};
+ const activity=await service.createActivity(owner,{courseId:course.id,category:'exam',title:'Examen ya preparado',date:'2026-11-02',maxPoints:10,requestId:randomUUID()});
+ await service.saveGrades(owner,{requestId:randomUUID(),activityId:activity.id,revision:0,rows:[{studentId:students[0].id,score:10}]});
+ await assert.rejects(service.savePeriodSheetPlan(owner,{period:'P2',revision:0,enabled:true,columns:[{...exam,maxPoints:36},notebook]}),/superan sus 35 puntos/);
+ const plan=await service.savePeriodSheetPlan(owner,{period:'P2',revision:0,enabled:true,columns:[exam,notebook]});
+ await service.savePeriodSheetGrades(owner,{period:'P2',courseId:course.id,revision:plan.revision,rows:[{studentId:students[0].id,scores:{[exam.id]:18,[notebook.id]:17}},{studentId:students[1].id,scores:{[exam.id]:0,[notebook.id]:0}}]});
+ const report=await service.report(owner,course.id,students[0].id,'P2');
+ assert.equal(report.directEvaluationMode,'combined');
+ assert.equal(report.categories.find(item=>item.key==='exam')?.points,18);
+ assert.equal(report.categories.find(item=>item.key==='notebook')?.points,17);
+ assert.equal(report.grades.find(item=>item.activityId===activity.id)?.score,10);
+ assert.equal(report.grades.find(item=>item.activityId===activity.id)?.countedInPeriod,false);
+ const ledger=await service.teacherLedger(owner,'P2');
+ assert.ok(ledger.directPlan?.enabled);
+ assert.equal(ledger.rows.find(row=>row.student.id===students[0].id)?.categories.find(item=>item.key==='exam')?.points,18);
+ const activityColumn=ledger.groups.flatMap(group=>group.columns).find(item=>item.key===`activity:${activity.id}`)!;
+ assert.equal(ledger.rows.find(row=>row.student.id===students[0].id)?.scores.find(item=>item.key===activityColumn.key)?.state,'not_counted');
+ const directView=await service.periodSheet(owner,'P2',course.id);
+ assert.equal(directView.categories.find(item=>item.key==='notebook')?.weight,20);
+ assert.equal(directView.rows[0].result.categories?.find(item=>item.category==='notebook')?.earned,17);
+});
+
+test('Participación, Disciplina, Examen y Libreta llegan a la matriz sin duplicar actividades ni borrar Comportamiento diario',async()=>{
+ const {owner,course,students}=await fixture();
+ const initial=await service.bootstrap(owner);const period=initial.plan.period;
+ const configured=await service.updatePlan(owner,{...initial.plan,status:'confirmed',categories:initial.plan.categories.map(category=>category.key==='participation'?{...category,dailyWeights:{participation:40,behavior:40,discipline:20}}:category)});
+ const examWeight=configured.categories.find(category=>category.key==='exam')!.weight;
+ const notebookWeight=configured.categories.find(category=>category.key==='notebook')!.weight;
+ const examActivity=await service.createActivity(owner,{courseId:course.id,category:'exam',title:'Examen ya preparado',date:configured.startDate,maxPoints:10,requestId:randomUUID()});
+ await service.saveGrades(owner,{requestId:randomUUID(),activityId:examActivity.id,revision:examActivity.revision,rows:[{studentId:students[0].id,score:10}]});
+
+ const attendance=await service.saveAttendance(owner,{requestId:randomUUID(),courseId:course.id,date:configured.startDate,block:1,revision:0,lessonType:'teoria',topic:'Clase de prueba',rows:students.map(student=>({studentId:student.id,status:'P'}))});
+ const session=await service.attendance(owner,course.id,configured.startDate,1);
+ await service.saveDailyAssessment(owner,{requestId:randomUUID(),courseId:course.id,date:configured.startDate,block:1,revision:attendance.revision,assessmentRevision:session.session.assessmentRevision,rows:students.map(student=>({studentId:student.id,participation:8,behavior:7,discipline:5,comment:''}))});
+
+ const participation=column('Participación',10),discipline=column('Disciplina',10),exam=column('Examen directo',examWeight),notebook=column('Libreta global',notebookWeight);
+ const columns=[
+  {...participation,category:'participation' as const,captureKey:'participation' as const},
+  {...discipline,category:'participation' as const,captureKey:'discipline' as const},
+  {...exam,category:'exam' as const,captureKey:'exam' as const},
+  {...notebook,category:'notebook' as const,captureKey:'notebook' as const},
+ ];
+ const plan=await service.savePeriodSheetPlan(owner,{period,revision:0,enabled:true,columns});
+ await service.savePeriodSheetGrades(owner,{period,courseId:course.id,revision:plan.revision,rows:[{studentId:students[0].id,scores:{[participation.id]:8,[discipline.id]:5,[exam.id]:20,[notebook.id]:15}}]});
+
+ const report=await service.report(owner,course.id,students[0].id,period);
+ const participationCategory=report.categories.find(item=>item.key==='participation')!;
+ assert.equal(participationCategory.points,10.5,'Combina los tres componentes internos de los 15 puntos');
+ assert.deepEqual(participationCategory.dailyBreakdown,{
+  participation:{percentage:40,rawEarned:8,rawPossible:10,points:4.8},
+  behavior:{percentage:40,rawEarned:7,rawPossible:10,points:4.2},
+  discipline:{percentage:20,rawEarned:5,rawPossible:10,points:1.5},
+ });
+ assert.equal(report.categories.find(item=>item.key==='exam')?.points,20);
+ assert.equal(report.categories.find(item=>item.key==='notebook')?.points,15);
+ assert.equal(report.grades.find(item=>item.activityId===examActivity.id)?.score,10,'La nota de actividad permanece guardada');
+ assert.equal(report.grades.find(item=>item.activityId===examActivity.id)?.countedInPeriod,false,'No suma dos veces al usar la captura directa de Examen');
+
+ const ledger=await service.teacherLedger(owner,period);
+ const row=ledger.rows.find(item=>item.student.id===students[0].id)!;
+ assert.equal(row.categories.find(item=>item.key==='participation')?.points,10.5);
+ assert.equal(row.categories.find(item=>item.key==='exam')?.points,20);
+ assert.equal(row.categories.find(item=>item.key==='notebook')?.points,15);
+ const persisted=await service.periodSheet(owner,period,course.id);
+ assert.deepEqual(persisted.plan.columns.map(item=>item.captureKey),['participation','discipline','exam','notebook']);
+});
+
+test('rechaza capturas de Participación/Disciplina sin reparto configurado y no mezcla modalidad diaria con directa',async()=>{
+ const {owner,course}=await fixture();const participation=column('Participación',10);
+ await assert.rejects(service.savePeriodSheetPlan(owner,{period:'P2',revision:0,enabled:true,columns:[{...participation,category:'participation',captureKey:'participation'}]}),/Configura primero el reparto/);
+ const initial=await service.bootstrap(owner);
+ await service.updatePlan(owner,{...initial.plan,status:'confirmed',categories:initial.plan.categories.map(category=>category.key==='participation'?{...category,dailyWeights:{participation:40,behavior:40,discipline:20}}:category)});
+ const direct={...participation,category:'participation' as const,captureKey:'participation' as const};
+ const legacy={...column('Valoración completa',15),category:'participation' as const};
+ await assert.rejects(service.savePeriodSheetPlan(owner,{period:initial.plan.period,revision:0,enabled:true,columns:[direct,legacy]}),/No combines una columna directa/);
+});
+
 test('no mezcla propietarios, cursos ni períodos; funciona sin configurar un plan de actividades',async()=>{
  const {owner,course,other,students,outsiders}=await fixture();const col=column('Evaluación',100);
  const plan=await service.savePeriodSheetPlan(owner,{period:'P3',revision:0,enabled:true,columns:[col]});

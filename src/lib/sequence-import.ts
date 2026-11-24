@@ -189,7 +189,10 @@ function sourceLevels(note: string): RubricLevel[] {
   const matches = note.split(/\s*;\s*/).flatMap(part => {
     const pointFirst = part.match(/(?:^|:)\s*(\d+(?:[.,]\d+)?)\s*=\s*(.+?)\s*\.?$/);
     if (pointFirst) return [{ points: Number(pointFirst[1].replace(',', '.')), description: normalizeText(pointFirst[2]) }];
-    const labelFirst = part.match(/(?:^|:)\s*([^=;]+?)\s*=\s*(\d+(?:[.,]\d+)?)\s*\.?$/);
+    // A scoring note can prepend prose such as “Puntaje sugerido: 5 puntos.
+    // Cada criterio vale 1 punto: logrado = 1”. Ignore those earlier colons
+    // and keep only the label immediately before the level's numeric value.
+    const labelFirst = part.match(/(?:^|:)\s*([^:;=]+?)\s*=\s*(\d+(?:[.,]\d+)?)\s*\.?$/);
     return labelFirst ? [{ points: Number(labelFirst[2].replace(',', '.')), description: normalizeText(labelFirst[1]) }] : [];
   }).map(level => ({ ...level, label: level.description.replace(/^./, first => first.toLocaleUpperCase('es')) }))
     .filter(level => Number.isFinite(level.points) && level.label.length > 0)

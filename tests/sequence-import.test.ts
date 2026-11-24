@@ -211,6 +211,7 @@ test('la secuencia conserva anexos diagnósticos, escalas variables y el examen 
   assert.equal(halfPoint?.maxPoints, 5);
   assert.equal(halfPoint?.relatedIndicatorText, 'emplea notación para diferenciar vectores.');
   assert.equal(halfPoint?.relatedCompetencyText, 'comunicativa; pensamiento lógico, creativo y crítico.');
+  assert.deepEqual(halfPoint?.levels.map(level => level.label), ['No logrado', 'Parcialmente logrado', 'Logrado']);
   assert.deepEqual(halfPoint?.levels.map(level => level.points), [0, 0.5, 1]);
   assert.equal(halfPoint?.criteria.length, 5);
   const twoPoint = halfPoint ? result.activities.find(activity => activity.code === '2.1')?.assessmentInstrument : undefined;

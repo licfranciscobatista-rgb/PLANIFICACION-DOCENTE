@@ -2,9 +2,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Save, Search, AlertCircle, LoaderCircle, Download, RotateCcw } from 'lucide-react';
 import { COMPETENCY_GROUPS, PERIOD_START } from '@/lib/model';
-import type { Activity, AttendanceMark, AttendanceView, ClassLessonType, Course, CourseRegisterSummary, GradesView, LessonType, SaveReceipt } from '@/lib/model';
+import type { Activity, AttendanceMark, AttendanceView, ClassLessonType, Course, CourseRegisterSummary, GradesView, LessonType, PeriodSheetCaptureKey, SaveReceipt } from '@/lib/model';
 import { apiPost, downloadJson, errorText, useRemote } from '@/lib/client';
 import { AttendanceWorkbookImportPanel } from './attendance-workbook-import';
+import PeriodEvaluationPanel from './period-evaluation';
 
 const marks:[AttendanceMark,string][]=[['P','Presente'],['A','Ausente'],['T','Tardanza'],['E','Excusa'],['R','Retiro voluntario']];
 function Loader({error}:{error?:string}) {return error?<div className="notice warning" role="alert">{error}</div>:<div className="loading-state"><LoaderCircle className="spin"/> Cargando registros…</div>;}
@@ -191,13 +192,22 @@ function AttendanceCapture({initial,courseCode,today,onReload,mode}:{initial:Att
   </>}
   {error&&<div className="notice warning" role="alert">{error}</div>}{message&&<div className="notice success" role="status"><Check size={17}/>{message}</div>}<p className="footnote">Sin marcas guardadas, un bloque pasado del horario queda como no impartido; fuera del calendario queda no programado. Las valoraciones se guardan por separado y solo incluyen estudiantes presentes o tardíos.</p></>;
 }
-export function GradesPanel({course,activities,selectedActivityId,onOpenActivities,onConfigureActivity}:{course:Course;activities:Activity[];selectedActivityId?:string;onOpenActivities:()=>void;onConfigureActivity:(activityId:string,courseId:string)=>void}){
+export function GradesPanel({mode,course,activities,selectedActivityId,period,onOpenActivities,onConfigureActivity,onOpenPlan}:{mode:'activities'|'quick';course:Course;activities:Activity[];selectedActivityId?:string;period:string;onOpenActivities:()=>void;onConfigureActivity:(activityId:string,courseId:string)=>void;onOpenPlan:()=>void}){
+  const [quickCapture,setQuickCapture]=useState<PeriodSheetCaptureKey|null>(null);
   const list=activities.filter(a=>a.courseId===course.id&&(a.scoringMode==='rubric'?a.indicatorPoints.length>0&&a.rubric.length>0:Boolean(a.instrument.trim()||a.indicatorPoints.length)));
+  const sameCategoryActivityCount=quickCapture&&quickCapture!=='discipline'?list.filter(activity=>activity.period===period&&activity.category===(quickCapture==='participation'?'participation':quickCapture)).length:0;
   const [selected,setSelected]=useState(selectedActivityId||list[0]?.id||'');useEffect(()=>{if(selectedActivityId)setSelected(selectedActivityId);},[selectedActivityId]);const id=list.some(a=>a.id===selected)?selected:list[0]?.id||'';
-  const remote=useRemote<GradesView>('grades',{activityId:id},Boolean(id));
-  return <><div className="section-heading"><div><p className="eyebrow">EVALUACIÓN</p><h1>Calificaciones</h1><p className="muted">Selecciona una actividad ya preparada para registrar sus resultados. Puedes corregirla aunque sea de otro día.</p></div></div>
+  const remote=useRemote<GradesView>('grades',{activityId:id},mode==='activities'&&Boolean(id));
+  return <><div className="section-heading"><div><p className="eyebrow">{mode==='quick'?'CAPTURA DIRECTA':'EVALUACIÓN'}</p><h1>{mode==='quick'?'Calificar':'Actividades preparadas'}</h1><p className="muted">{mode==='quick'?'Elige una categoría para abrir su lista de estudiantes. La captura se guarda en el período activo.':'Evalúa aquí las actividades ya preparadas; su configuración se conserva.'}</p></div></div>
+  {mode==='quick'?<>
+    <div className="panel quick-capture-menu"><div className="section-heading"><div><h2>¿Qué vas a calificar?</h2><p className="muted">Cada botón abre una captura separada para el curso seleccionado.</p></div></div><div className="toolbar quick-capture-buttons" role="tablist" aria-label="Capturas directas">
+      {([['participation','Participación'],['discipline','Disciplina'],['exam','Examen'],['notebook','Libreta']] as [PeriodSheetCaptureKey,string][]).map(([key,label])=><button key={key} type="button" role="tab" aria-selected={quickCapture===key} className={'button '+(quickCapture===key?'primary':'secondary')} onClick={()=>setQuickCapture(key)}>{label}</button>)}
+    </div></div>
+    {quickCapture?<PeriodEvaluationPanel courses={[course]} period={period} captureType={quickCapture} sameCategoryActivityCount={sameCategoryActivityCount} onOpenPlan={onOpenPlan}/>:<div className="empty-state"><h2>Selecciona qué vas a calificar</h2><p>Las actividades preparadas están aparte y no se cambian desde estas capturas.</p></div>}
+  </>:<>
   {list.length>0&&<div className="panel activity-selector"><label>Actividad preparada<select value={id} onChange={e=>setSelected(e.target.value)}>{list.map(a=><option value={a.id} key={a.id}>{a.date+' · '+(a.sequenceCode?a.sequenceCode+' · ':'')+a.title+' / '+a.maxPoints}</option>)}</select></label><p className="muted">Guardar notas conserva la asistencia y el estado de la clase.</p></div>}
-    {!id?<div className="empty-state"><h2>No hay actividades listas para calificar</h2><p>Una actividad aparece aquí después de asignarla a un período y guardar su valoración. La calificación directa necesita indicadores con puntos; la rúbrica, además, criterios vinculados.</p><button className="button secondary" onClick={onOpenActivities}>Ir a Actividades</button></div>:remote.data?<GradeCapture key={id+remote.data.activity.revision} initial={remote.data} course={course} onOpenActivities={onOpenActivities} onConfigureActivity={onConfigureActivity}/>:<Loader error={remote.error}/>}</>;
+    {!id?<div className="empty-state"><h2>No hay actividades listas para calificar</h2><p>Una actividad aparece aquí cuando ya está asignada y configurada.</p><button className="button secondary" onClick={onOpenActivities}>Revisar Actividades</button></div>:remote.data?<GradeCapture key={id+remote.data.activity.revision} initial={remote.data} course={course} onOpenActivities={onOpenActivities} onConfigureActivity={onConfigureActivity}/>:<Loader error={remote.error}/>}</>}
+  </>;
 }
 function GradeCapture({initial,course,onOpenActivities,onConfigureActivity}:{initial:GradesView;course:Course;onOpenActivities:()=>void;onConfigureActivity:(activityId:string,courseId:string)=>void}){
   const activity=initial.activity;const draft=useDraft('grades:'+activity.id,initial.rows,activity.revision);

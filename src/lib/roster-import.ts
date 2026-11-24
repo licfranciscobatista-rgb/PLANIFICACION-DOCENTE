@@ -29,6 +29,17 @@ function normalize(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
+function courseSheetAliases(courseCode: string): Set<string> {
+  const compact = normalize(courseCode).replace(/\s+/g, '');
+  const aliases = new Set([compact]);
+  const fifthGrade = compact.match(/^5([a-z])$/);
+  if (fifthGrade) {
+    aliases.add(`quinto${fifthGrade[1]}`);
+    aliases.add(`5to${fifthGrade[1]}`);
+  }
+  return aliases;
+}
+
 function normalizeTarget(target: string): string {
   const absolute = target.startsWith('/') ? target.slice(1) : `xl/${target}`;
   const parts: string[] = [];
@@ -91,8 +102,11 @@ export async function parseRosterWorkbook(input: ArrayBuffer | Uint8Array, cours
   const imported: ImportedCourseRoster[] = [];
   for (const requestedCode of courseCodes) {
     const code = requestedCode.toLocaleUpperCase();
-    const sheet = sheets.find(item => (item.getAttribute('name') ?? '').trim().toLocaleUpperCase() === code);
-    if (!sheet) throw new Error(`No encontré una pestaña llamada «${code}» en el libro.`);
+    const aliases = courseSheetAliases(code);
+    const matches = sheets.filter(item => aliases.has(normalize(item.getAttribute('name') ?? '').replace(/\s+/g, '')));
+    if (!matches.length) throw new Error(`No encontré una pestaña llamada «${code}» en el libro.`);
+    if (matches.length > 1) throw new Error(`Encontré varias pestañas que podrían corresponder a «${code}». Deja solo una con datos de ese curso.`);
+    const sheet = matches[0]!;
     const relationshipId = sheet.getAttribute('r:id') || sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
     const target = relationshipId ? targets.get(relationshipId) : null;
     if (!target) throw new Error(`No pude localizar la pestaña «${code}» dentro del libro.`);
@@ -123,14 +137,26 @@ export async function parseRosterWorkbook(input: ArrayBuffer | Uint8Array, cours
 
     const roster: RosterRow[] = [];
     const ids = new Set<string>(), numbers = new Set<number>();
-    for (const [rowNumber, row] of rows) {
+    let previousRowNumber = headerRow;
+    for (const [rowNumber, row] of [...rows].sort((a, b) => a[0] - b[0])) {
       if (rowNumber <= headerRow) continue;
+      // Roster workbooks often contain another table (grades, attendance, or
+      // notes) below the class list. The first blank row separates those tables.
+      if (roster.length && rowNumber > previousRowNumber + 1) break;
+      previousRowNumber = rowNumber;
       const numberText = row.get(numberColumn)?.trim() ?? '';
       const name = row.get(nameColumn)?.trim() ?? '';
-      if (!numberText && !name) continue;
+      if (!numberText && !name) {
+        if (roster.length) break;
+        continue;
+      }
+      if (!numberText && name && roster.length) break;
       // Excel teachers often put notes beneath the roster using the same columns.
       // Only rows whose ID cell is numeric can represent a numbered student.
-      if (!/^\d+(?:\.0+)?$/.test(numberText)) continue;
+      if (!/^\d+(?:\.0+)?$/.test(numberText)) {
+        if (roster.length && numberText) break;
+        continue;
+      }
       const number = Number(numberText);
       if (!Number.isInteger(number) || number < 1 || number > 9999) throw new Error(`La pestaña «${code}», fila ${rowNumber}: el número de lista debe ser un entero de 1 a 9999.`);
       if (!name || name.length > 180) throw new Error(`La pestaña «${code}», fila ${rowNumber}: escribe un nombre de 1 a 180 caracteres.`);

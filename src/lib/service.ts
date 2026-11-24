@@ -62,6 +62,11 @@ const activityFields = "id,course_id,shared_id,period,category,title,activity_da
 const defaultCompetency: Record<ActivityCategoryKey, CompetencyKey> = { exam: "logico_matematica", participation: "desarrollo_personal", notebook: "logico_matematica", sequence: "logico_matematica", homework: "logico_matematica", extra: "logico_matematica" };
 function defaultForCategory(key: ActivityCategoryKey): CompetencyKey { return defaultCompetency[key] ?? "logico_matematica"; }
 function normalizedPlan(value: EvaluationPlan): EvaluationPlan { return { ...value, categories: value.categories.map(c => ({ ...c, competency: c.competency ?? defaultForCategory(c.key) })) }; }
+function periodSheetWeights(categories:EvaluationPlan["categories"]){
+ const weights:Record<string,number>={};
+ for(const category of categories){weights[category.key]=category.weight;if(category.key==="participation"&&category.dailyWeights){weights["participation:participation"]=category.weight*category.dailyWeights.participation/100;weights["participation:discipline"]=category.weight*category.dailyWeights.discipline/100;}}
+ return weights;
+}
 function mergeLegacySequences(plans: EvaluationPlan[]): SequencePlan | null {
  const legacyPlans = plans.filter(item => item.sequence);
  if (!legacyPlans.length) return null;
@@ -862,7 +867,7 @@ export class RegistroService {
   const directPlan=await readPeriodSheet(this.db,ownerId,selectedPeriod);
   const availablePeriods = (await this.db.query("SELECT period FROM evaluation_plans WHERE owner_id=$1 UNION SELECT period FROM period_score_plans WHERE owner_id=$1 ORDER BY period", [ownerId])).rows.map(row=>str(row.period));
   const courseRows = (await this.db.query("SELECT id,code,name FROM courses WHERE owner_id=$1 ORDER BY code", [ownerId])).rows;
-  if(directPlan.enabled){
+  if(directPlan.enabled&&!directPlan.columns.some(column=>Boolean(column.category))){
    const rows:TeacherLedgerSummary['rows']=[];
    for(const course of courseRows){
     const sheet=await this.periodSheet(ownerId,selectedPeriod,str(course.id));
@@ -913,6 +918,13 @@ export class RegistroService {
    columnKeysByActivity.set(item.id,activityColumnKeys);
   }
 
+  const directCategories=new Set(directPlan.enabled?directPlan.columns.flatMap(column=>column.category&&column.captureKey!=='participation'&&column.captureKey!=='discipline'?[column.category]:[]):[]);
+  if(directPlan.enabled)for(const item of directPlan.columns){
+   if(!item.category)continue;
+   const key=`period:${item.id}`;
+   columns.set(key,{key,label:item.label,category:item.category,categoryLabel:categoryLabels.get(item.category)??item.category,competency:item.competency??null,...(item.group?{group:item.group}:{}),kind:"period-score",date:item.date,maxPoints:item.maxPoints,courseIds:courseRows.map(course=>str(course.id))});
+  }
+
   const participation = p.categories.find(category=>category.key==="participation");
   const behaviorKey="behavior:period";
   const participationKey="participation:period",disciplineKey="discipline:period";
@@ -920,7 +932,14 @@ export class RegistroService {
   columns.set(behaviorKey,{key:behaviorKey,label:"Comportamiento diario",category:"behavior",categoryLabel:"Valoración diaria",competency:participation?.competency??defaultForCategory("participation"),kind:"behavior",date:null,maxPoints:participation?.dailyMax??10,courseIds:courseRows.map(course=>str(course.id))});
   columns.set(disciplineKey,{key:disciplineKey,label:"Disciplina diaria",category:"discipline",categoryLabel:"Valoración diaria",competency:participation?.competency??defaultForCategory("participation"),kind:"discipline",date:null,maxPoints:participation?.dailyMax??10,courseIds:courseRows.map(course=>str(course.id))});
   const allColumns=[...columns.values()];
-  const groups=COMPETENCY_GROUPS.map(group=>({key:group.key,label:group.label,columns:allColumns.filter(column=>column.competency===group.key).sort((a,b)=>(a.date??"").localeCompare(b.date??"")||a.category.localeCompare(b.category)||a.label.localeCompare(b.label))})).filter(group=>group.columns.length);
+  const groupMap=new Map<string,{key:string;label:string;columns:TeacherLedgerSummary["groups"][number]["columns"]}>();
+  for(const column of allColumns){
+   const competency=column.competency?COMPETENCY_GROUPS.find(item=>item.key===column.competency):undefined;
+   const label=column.group?.trim()||competency?.label||column.categoryLabel;
+   const key=column.group?.trim()?`custom:${column.group.trim().toLocaleLowerCase()}`:column.competency??`category:${column.category}`;
+   const group=groupMap.get(key)??{key,label,columns:[]};group.columns.push(column);groupMap.set(key,group);
+  }
+  const groups=[...groupMap.values()].map(group=>({...group,columns:group.columns.sort((a,b)=>(a.date??"").localeCompare(b.date??"")||a.category.localeCompare(b.category)||a.label.localeCompare(b.label))}));
 
   const rows: TeacherLedgerSummary["rows"]=[];
   for (const c of courseRows) {
@@ -932,6 +951,10 @@ export class RegistroService {
     const scoreByKey=new Map(scores.map(score=>[score.key,score]));
     for (const grade of report.grades) {
      const gradeColumnKeys=columnKeysByActivity.get(grade.activityId)??[];
+     if(directCategories.has(grade.category)||grade.countedInPeriod===false){
+      for(const key of gradeColumnKeys){const column=columns.get(key);if(!column||!scoreByKey.has(key))continue;scoreByKey.set(key,{key,points:grade.score,possible:column.maxPoints,state:grade.included?"not_counted":"excluded",pending:0,comment:grade.comment||undefined});}
+      continue;
+     }
       if (grade.rubric.length&&gradeColumnKeys.length) {
       grade.rubric.forEach((criterion,index)=>{
        const key=gradeColumnKeys[index],column=columns.get(key);
@@ -973,15 +996,21 @@ export class RegistroService {
     const disciplinePending=disciplineValues.filter(value=>value===null).length;
     const disciplineGraded=disciplineValues.length-disciplinePending;
     scoreByKey.set(disciplineKey,{key:disciplineKey,points:disciplineGraded?disciplinePoints:null,possible:disciplinePossible,state:disciplinePossible===0?"not_applicable":disciplinePending?"pending":"graded",pending:disciplinePending});
+    if(report.directEvaluation)for(const item of report.directEvaluation.columns){
+     if(!item.category)continue;
+     const key=`period:${item.id}`,points=report.directEvaluation.scores[item.id]??null;
+     const componentCapture=item.captureKey==='participation'||item.captureKey==='discipline';
+     scoreByKey.set(key,{key,points,possible:item.maxPoints,state:componentCapture?"not_counted":points===null?"pending":"graded",pending:componentCapture?0:points===null?1:0});
+    }
     const finalScores=[...scoreByKey.values()];
-    const counted=finalScores.filter(score=>score.state!=="excluded"&&score.state!=="not_applicable");
+    const counted=finalScores.filter(score=>score.state!=="excluded"&&score.state!=="not_applicable"&&score.state!=="not_counted");
     const rawTotal=round(counted.reduce((sum,score)=>sum+(score.points??0),0));
     const rawPossible=round(counted.reduce((sum,score)=>sum+score.possible,0));
     const observations=[...report.grades.filter(item=>item.comment.trim()).map(item=>`${item.title}: ${item.comment.trim()}`),...report.timeline.filter(item=>item.comment.trim()).map(item=>`${item.date} · Registro diario: ${item.comment.trim()}`)];
     rows.push({course,student,categories:report.categories,scores:finalScores,rawTotal,rawPossible,bonusPoints:report.bonusPoints,bonusPossible:report.bonusPossible,weightedTotal:report.total??report.provisionalTotal,finalized:report.total!==null,observations});
    }
   }
-  return {period:p.period,availablePeriods,categories:p.categories.map(({key,label,group,weight,expectedRaw})=>({key,label,group,weight,expectedRaw})),groups,rows,note:"El libro conserva cada actividad y cada criterio bajo su competencia. El resumen convierte cada categoría a su peso asignado; las categorías con el mismo grupo se muestran en una columna y conservan su desglose. Las valoraciones diarias usan solo sesiones impartidas. Los pendientes no son cero y las clases no impartidas no entran en esos promedios."};
+  return {period:p.period,availablePeriods,categories:p.categories.map(({key,label,group,weight,expectedRaw})=>({key,label,group,weight,expectedRaw})),groups,rows,...(directPlan.enabled?{directPlan}:{}),note:directPlan.enabled?"El cuadro directo y las actividades alimentan la misma matriz. Una categoría con columnas directas no vuelve a sumar sus actividades; las demás categorías siguen su cálculo habitual. Los puntos extra se agregan aparte.":"El libro conserva cada actividad y cada criterio bajo su competencia. El resumen convierte cada categoría a su peso asignado; las categorías con el mismo grupo se muestran en una columna y conservan su desglose. Las valoraciones diarias usan solo sesiones impartidas. Los pendientes no son cero y las clases no impartidas no entran en esos promedios."};
  }
  private async gradesView(ownerId: string, activityId: string, tx: DBAdapter): Promise<GradesView> {
   parse(uid,activityId);
@@ -1119,13 +1148,15 @@ export class RegistroService {
  async periodSheet(ownerId:string,period:string,courseId:string){
   await this.ensureOwner(ownerId);
   const sheetPlan=await readPeriodSheet(this.db,ownerId,period);
-  if(!courseId)return {plan:sheetPlan,courseId,rows:[]};
+  let categories:{key:ActivityCategoryKey;label:string;weight:number;dailyMax:number|null;competency:CompetencyKey|null;group?:string;dailyWeights:EvaluationPlan["categories"][number]["dailyWeights"]}[]=[];let categoryWeights:Record<string,number>={};
+  try{const evaluationPlan=await this.planForPeriod(ownerId,period);categories=evaluationPlan.categories.map(({key,label,weight,dailyMax,competency,group,dailyWeights})=>({key,label,weight,dailyMax,competency,dailyWeights,...(group?{group}:{})}));categoryWeights=periodSheetWeights(evaluationPlan.categories);}catch(error){if(!(error instanceof AppError&&error.status===404)||sheetPlan.columns.some(column=>Boolean(column.category)))throw error;}
+  if(!courseId)return {plan:sheetPlan,courseId,categories,rows:[]};
   await this.requireCourse(ownerId,courseId);
   const roster=await this.roster(ownerId,courseId);
   const grades=(await this.db.query('SELECT student_id,column_id,score FROM period_scores WHERE owner_id=$1 AND period=$2 AND course_id=$3',[ownerId,period,courseId])).rows;
-  return {plan:sheetPlan,courseId,rows:roster.map(student=>({student,result:periodSheetResult(sheetPlan,Object.fromEntries(grades.filter(row=>row.student_id===student.id).map(row=>[str(row.column_id),num(row.score)])))}))};
+  return {plan:sheetPlan,courseId,categories,rows:roster.map(student=>({student,result:periodSheetResult(sheetPlan,Object.fromEntries(grades.filter(row=>row.student_id===student.id).map(row=>[str(row.column_id),num(row.score)])),categoryWeights)}))};
  }
- async savePeriodSheetPlan(ownerId:string,input:unknown){await this.ensureOwner(ownerId);return savePeriodSheetPlan(this.db,ownerId,input);}
+ async savePeriodSheetPlan(ownerId:string,input:unknown){await this.ensureOwner(ownerId);const period=typeof input==='object'&&input!==null&&'period'in input?String((input as {period:unknown}).period):'';let categoryWeights:Record<string,number>={};try{const evaluationPlan=await this.planForPeriod(ownerId,period);categoryWeights=periodSheetWeights(evaluationPlan.categories);}catch(error){if(!(error instanceof AppError&&error.status===404))throw error;}return savePeriodSheetPlan(this.db,ownerId,input,categoryWeights);}
  async savePeriodSheetGrades(ownerId:string,input:unknown){await this.ensureOwner(ownerId);return savePeriodSheetGrades(this.db,ownerId,input);}
 
  async updatePlan(ownerId: string, input: EvaluationPlan): Promise<EvaluationPlan> {
@@ -1171,11 +1202,29 @@ export class RegistroService {
   stats.percent = stats.sessions && stats.pending === 0 ? round(creditedAttendance / stats.sessions * 100) : null;
   const gradeRecords = (await this.db.query(`SELECT a.id AS activity_id,a.title,a.activity_date::text AS date,a.block,a.category,a.max_points,a.scoring_mode,a.rubric,a.indicator_points,a.competency,a.indicator,a.sequence_code,a.sequence_activity_id,a.sequence_planned_period,a.evidence,a.instrument,a.activity_purpose,g.score,g.criterion_levels,g.comment FROM activities a LEFT JOIN grades g ON g.activity_id=a.id AND g.student_id=$3 AND g.owner_id=a.owner_id WHERE a.owner_id=$1 AND a.course_id=$2 AND a.period=$4 ORDER BY a.activity_date,a.title`, [ownerId, courseId, studentId, p.period])).rows;
   const sessionKeys = new Set(taught.map(s => `${str(s.date)}:${Number(s.block)}`));
-  const grades: StudentReport["grades"] = gradeRecords.map(r => ({ studentId, number: person.number, name: person.name, score: num(r.score), criterionLevels: json(r.criterion_levels, null), comment: str(r.comment), activityId: str(r.activity_id), title: str(r.title), date: str(r.date), category: r.category as Activity["category"], maxPoints: Number(r.max_points), included: r.category !== "notebook" || sessionKeys.has(`${str(r.date)}:${Number(r.block)}`) && !(withdrawnFrom && str(r.date) >= withdrawnFrom), rubric: json(r.rubric, []), indicatorPoints: json(r.indicator_points, []), scoringMode: r.scoring_mode as 'points'|'rubric', competency: (str(r.competency) as CompetencyKey) || (p.categories.find(cat => cat.key === r.category)?.competency ?? (r.category === "extra" ? defaultForCategory("extra") : null)), sequenceCode: str(r.sequence_code), sequenceActivityId: str(r.sequence_activity_id) || null, sequencePlannedPeriod: str(r.sequence_planned_period) || null, evidence: str(r.evidence), instrument: str(r.instrument), purpose: str(r.activity_purpose) }));
+  const directEvaluation=await studentPeriodSheet(this.db,ownerId,p.period,studentId,periodSheetWeights(p.categories));
+  const isDimensionCapture=(column:{captureKey?:string})=>column.captureKey==='participation'||column.captureKey==='discipline';
+  const directCategories=new Set(directEvaluation?.columns.flatMap(column=>column.category&&!isDimensionCapture(column)?[column.category]:[])??[]);
+  const directParticipation=directEvaluation?.columns.filter(column=>column.category==='participation'&&column.captureKey==='participation')??[];
+  const directDiscipline=directEvaluation?.columns.filter(column=>column.category==='participation'&&column.captureKey==='discipline')??[];
+  const grades: StudentReport["grades"] = gradeRecords.map(r => ({ studentId, number: person.number, name: person.name, score: num(r.score), criterionLevels: json(r.criterion_levels, null), comment: str(r.comment), activityId: str(r.activity_id), title: str(r.title), date: str(r.date), category: r.category as Activity["category"], maxPoints: Number(r.max_points), included: r.category !== "notebook" || sessionKeys.has(`${str(r.date)}:${Number(r.block)}`) && !(withdrawnFrom && str(r.date) >= withdrawnFrom), countedInPeriod: (r.category !== "notebook" || sessionKeys.has(`${str(r.date)}:${Number(r.block)}`) && !(withdrawnFrom && str(r.date) >= withdrawnFrom)) && !directCategories.has(r.category as Activity["category"]) && !(r.category==='participation'&&directParticipation.length>0), rubric: json(r.rubric, []), indicatorPoints: json(r.indicator_points, []), scoringMode: r.scoring_mode as 'points'|'rubric', competency: (str(r.competency) as CompetencyKey) || (p.categories.find(cat => cat.key === r.category)?.competency ?? (r.category === "extra" ? defaultForCategory("extra") : null)), sequenceCode: str(r.sequence_code), sequenceActivityId: str(r.sequence_activity_id) || null, sequencePlannedPeriod: str(r.sequence_planned_period) || null, evidence: str(r.evidence), instrument: str(r.instrument), purpose: str(r.activity_purpose) }));
   const bonusActivities=grades.filter(g=>g.category==="extra");
-  const bonusPoints=round(bonusActivities.reduce((sum,g)=>sum+(g.score??0),0));
-  const bonusPossible=round(bonusActivities.reduce((sum,g)=>sum+g.maxPoints,0));
+  const directExtraColumns=directEvaluation?.columns.filter(column=>column.category==="extra")??[];
+  const directExtraPoints=directExtraColumns.reduce((sum,column)=>sum+(directEvaluation?.scores[column.id]??0),0);
+  const directExtraPossible=directExtraColumns.reduce((sum,column)=>sum+column.maxPoints,0);
+  const bonusPoints=round(directCategories.has("extra")?directExtraPoints:bonusActivities.reduce((sum,g)=>sum+(g.score??0),0));
+  const bonusPossible=round(directCategories.has("extra")?directExtraPossible:bonusActivities.reduce((sum,g)=>sum+g.maxPoints,0));
   const categories: CategoryReport[] = p.categories.map(cat => {
+   const directColumns=directEvaluation?.columns.filter(column=>column.category===cat.key&&!isDimensionCapture(column))??[];
+   if(directColumns.length){
+    const rawPossible=round(directColumns.reduce((sum,column)=>sum+column.maxPoints,0));
+    const graded=directColumns.filter(column=>directEvaluation?.scores[column.id]!==null&&directEvaluation?.scores[column.id]!==undefined).length;
+    const pending=directColumns.length-graded;
+    const rawEarned=round(directColumns.reduce((sum,column)=>sum+(directEvaluation?.scores[column.id]??0),0));
+    const points=graded?rawEarned:null;
+    const observedDenominator=round(directColumns.filter(column=>directEvaluation?.scores[column.id]!==null&&directEvaluation?.scores[column.id]!==undefined).reduce((sum,column)=>sum+column.maxPoints,0));
+    return {key:cat.key,label:cat.label,group:cat.group,weight:cat.weight,rawEarned,rawPossible,expectedRaw:cat.weight,graded,pending,denominator:cat.weight,points,observedDenominator,observedPercent:observedDenominator?round(rawEarned/observedDenominator*100):null,planIncomplete:rawPossible!==cat.weight,provisional:p.status!=="confirmed"||pending>0||rawPossible!==cat.weight};
+   }
    if (cat.key === "participation" && cat.dailyWeights) {
     const maximum=cat.dailyMax??10;const sessionsForDaily=taught.filter(item=>item.status!=="R");
     const rated=(key:"participation"|"behavior"|"discipline",eligible:(status:AttendanceRow["status"])=>boolean,absenceIsZero:boolean)=>{
@@ -1189,10 +1238,16 @@ export class RegistroService {
      });
      return {earned:round(entries.reduce((sum,entry)=>sum+(entry.score??0),0)),possible:round(entries.reduce((sum,entry)=>sum+entry.max,0)),observed:round(entries.reduce((sum,entry)=>sum+(entry.score===null?0:entry.max),0)),graded:entries.filter(entry=>entry.score!==null).length,pending:entries.filter(entry=>entry.score===null).length};
     };
-    const participation=rated("participation",status=>status==="P"||status==="T",true);
+    let participation=rated("participation",status=>status==="P"||status==="T",true);
     const behavior=rated("behavior",status=>status==="P"||status==="T",false);
-    const discipline=rated("discipline",status=>status==="P"||status==="T",false);
-    const activities=grades.filter(grade=>grade.category==="participation"&&grade.included);
+    let discipline=rated("discipline",status=>status==="P"||status==="T",false);
+    const dimensionResult=(columns:typeof directParticipation)=>{
+     const gradedColumns=columns.filter(column=>directEvaluation?.scores[column.id]!==null&&directEvaluation?.scores[column.id]!==undefined);
+     return {earned:round(columns.reduce((sum,column)=>sum+(directEvaluation?.scores[column.id]??0),0)),possible:round(columns.reduce((sum,column)=>sum+column.maxPoints,0)),observed:round(gradedColumns.reduce((sum,column)=>sum+column.maxPoints,0)),graded:gradedColumns.length,pending:columns.length-gradedColumns.length};
+    };
+    if(directParticipation.length)participation=dimensionResult(directParticipation);
+    if(directDiscipline.length)discipline=dimensionResult(directDiscipline);
+    const activities=directParticipation.length?[]:grades.filter(grade=>grade.category==="participation"&&grade.included);
     participation.earned=round(participation.earned+activities.reduce((sum,grade)=>sum+(grade.score??0),0));
     participation.possible=round(participation.possible+activities.reduce((sum,grade)=>sum+grade.maxPoints,0));
     participation.observed=round(participation.observed+activities.reduce((sum,grade)=>sum+(grade.score===null?0:grade.maxPoints),0));
@@ -1239,7 +1294,8 @@ export class RegistroService {
    competencyValues.set(key, current);
   };
   for (const g of grades) {
-   if (!g.included || g.category === "notebook") continue;
+   if (!g.included || g.countedInPeriod===false || g.category === "notebook") continue;
+   if(directCategories.has(g.category))continue;
    if(g.indicatorPoints.length){
     for(const allocation of g.indicatorPoints){
      const ratio=g.scoringMode==="rubric"?indicatorRubricRatio(g.rubric,g.criterionLevels,allocation.indicatorId):g.score===null?null:g.score/g.maxPoints;
@@ -1259,13 +1315,14 @@ export class RegistroService {
     addCompetency(g.competency, g.score ?? 0, g.maxPoints, g.score === null ? 0 : 1, g.score === null ? 1 : 0);
    }
   }
+  if(directEvaluation)for(const column of directEvaluation.columns){if(!column.competency||!column.category||column.category==="extra")continue;const score=directEvaluation.scores[column.id];if(column.captureKey==='participation'||column.captureKey==='discipline'){const participationPlan=p.categories.find(category=>category.key==='participation');const share=participationPlan?.dailyWeights?participationPlan.weight*participationPlan.dailyWeights[column.captureKey]/100:0;const ratio=score===null||score===undefined?null:score/column.maxPoints;addCompetency(column.competency,ratio===null?0:round(ratio*share),share,ratio===null?0:1,ratio===null?1:0);}else addCompetency(column.competency,score??0,column.maxPoints,score===null||score===undefined?0:1,score===null||score===undefined?1:0);}
   const notebookCategory = p.categories.find(cat => cat.key === "notebook");
-  if (notebookCategory?.competency) for (const s of taught) {
+  if (!directCategories.has("notebook")&&notebookCategory?.competency) for (const s of taught) {
    const daily = grades.find(g => g.category === "notebook" && g.date === str(s.date) && Number(gradeRecords.find(r => r.activity_id === g.activityId)?.block) === Number(s.block));
    addCompetency(notebookCategory.competency, daily?.score ?? 0, notebookCategory.dailyMax ?? 2, daily?.score === null || daily?.score === undefined ? 0 : 1, daily?.score === null || daily?.score === undefined ? 1 : 0);
   }
   const participationCategory = p.categories.find(cat => cat.key === "participation");
-  if (participationCategory?.competency) for (const s of taught.filter(item => item.status !== "A" && item.status !== "E" && item.status !== "R")) {
+  if (!directCategories.has("participation")&&participationCategory?.competency) for (const s of taught.filter(item => item.status !== "A" && item.status !== "E" && item.status !== "R")) {
    const behavior = num(s.behavior);
    addCompetency(participationCategory.competency, behavior ?? 0, num(s.behavior_max) ?? participationCategory.dailyMax ?? 10, behavior === null ? 0 : 1, behavior === null ? 1 : 0);
   }
@@ -1273,12 +1330,14 @@ export class RegistroService {
    const value = competencyValues.get(group.key)!;
    return { key: group.key, label: group.label, points: round(value.points), possible: round(value.possible), percentage: value.possible ? round(value.points / value.possible * 100) : null, graded: value.graded, pending: value.pending };
   });
-  const directEvaluation=await studentPeriodSheet(this.db,ownerId,p.period,studentId);
+  const directEvaluationMode=directEvaluation?(directEvaluation.columns.some(column=>Boolean(column.category))?"combined":"exclusive"):undefined;
   const known = categories.filter(c => c.points !== null); const complete = p.status === "confirmed" && categories.every(c => !c.provisional && c.points !== null && c.pending === 0);
-  const notices = directEvaluation
-   ? ["El cuadro directo determina la nota del período; las actividades y valoraciones diarias se conservan aparte y no se suman otra vez.", "Los vacíos permanecen pendientes. La nota se completa cuando hay 100 puntos distribuidos y todas las columnas tienen nota.", "La captura diaria conserva asistencia, participación, comportamiento y disciplina en sus registros, aunque este cuadro sea la fuente de la nota final."]
+  const notices = directEvaluationMode==="exclusive"
+   ? ["El cuadro directo determina la nota del período; las actividades y valoraciones diarias se conservan aparte y no se suman otra vez.", "Los vacíos permanecen pendientes. La nota directa se completa cuando hay 100 puntos distribuidos y todas las columnas tienen nota.", "La captura diaria conserva asistencia, participación, comportamiento y disciplina en sus registros, aunque este cuadro sea la fuente de la nota final."]
+   : directEvaluationMode==="combined"
+   ? ["Las columnas asignadas a una categoría entran directamente en esa parte de la matriz. Las actividades de esa misma categoría se conservan como evidencia, pero no se vuelven a sumar.", "Participación y Disciplina directas sustituyen solo su dimensión; Comportamiento diario conserva su cálculo dentro de los 15 puntos.", "Las columnas de cada categoría no pueden superar sus puntos disponibles; la distribución debe completar el máximo antes de cerrar la nota.", "Los puntos extra se suman aparte. Los campos vacíos siguen pendientes y un cero registrado sí cuenta como cero."]
    : ["Solo las sesiones del horario con marcas de asistencia cuentan como impartidas. Una fecha fuera del calendario no se convierte en ausencia ni en clase no impartida.", "El porcentaje usa las sesiones trabajadas; las excusas quedan registradas por separado, tres tardanzas equivalen a una ausencia y R se aplica desde la fecha de retiro.", "Participación obtiene cero cuando hay ausencia o excusa; comportamiento y disciplina no se valoran si el estudiante no asistió.", "El resumen por competencia suma puntos asignados a criterios; el cálculo de nota final por categoría sigue separado.", "Los puntos extra se suman aparte de las cinco categorías y no cambian sus máximos.", "La nota final permanece pendiente mientras falten actividades, calificaciones o sesiones previstas.", ...(grades.some(g => !g.included && g.score !== null) ? ["Hay notas de libreta conservadas en fechas sin clase impartida; no se incluyen en el cálculo diario."] : [])];
-  return { student: person, course: { id: str(c.id), code: str(c.code), name: str(c.name) }, plan: p, attendance: stats, categories, competencies, ...(directEvaluation ? { directEvaluation } : {}), bonusPoints: directEvaluation ? 0 : bonusPoints, bonusPossible: directEvaluation ? 0 : bonusPossible, total: directEvaluation ? directEvaluation.total : complete ? round(categories.reduce((sum, c) => sum + (c.points ?? 0), 0) + bonusPoints) : null, provisionalTotal: directEvaluation ? directEvaluation.accumulated : known.length ? round(known.reduce((sum, c) => sum + (c.points ?? 0), 0) + bonusPoints) : bonusPoints ? bonusPoints : null, grades, timeline: effectiveSessions.map(s => ({ date: str(s.date), block: Number(s.block), status: s.status as AttendanceRow["status"] ?? null, behavior: s.status === "A" || s.status === "E" || s.status === "R" ? null : num(s.behavior), discipline: s.status === "A" || s.status === "E" || s.status === "R" ? null : num(s.discipline), participation: s.status === "A" || s.status === "E" ? 0 : s.status === "R" ? null : num(s.participation), dailyAssessmentRequired: Boolean(s.daily_assessment_required), comment: str(s.comment), sessionStatus: sessionStatus(str(s.date), Number(s.mark_count) ? ["P"] : [], this.today(), Boolean(s.scheduled)) })), notices }; }
+  return { student: person, course: { id: str(c.id), code: str(c.code), name: str(c.name) }, plan: p, attendance: stats, categories, competencies, ...(directEvaluation ? { directEvaluation,directEvaluationMode } : {}), bonusPoints: directEvaluationMode==="exclusive" ? 0 : bonusPoints, bonusPossible: directEvaluationMode==="exclusive" ? 0 : bonusPossible, total: directEvaluationMode==="exclusive" ? directEvaluation?.total??null : complete ? round(categories.reduce((sum, c) => sum + (c.points ?? 0), 0) + bonusPoints) : null, provisionalTotal: directEvaluationMode==="exclusive" ? directEvaluation?.accumulated??null : known.length ? round(known.reduce((sum, c) => sum + (c.points ?? 0), 0) + bonusPoints) : bonusPoints ? bonusPoints : null, grades, timeline: effectiveSessions.map(s => ({ date: str(s.date), block: Number(s.block), status: s.status as AttendanceRow["status"] ?? null, behavior: s.status === "A" || s.status === "E" || s.status === "R" ? null : num(s.behavior), discipline: s.status === "A" || s.status === "E" || s.status === "R" ? null : num(s.discipline), participation: s.status === "A" || s.status === "E" ? 0 : s.status === "R" ? null : num(s.participation), dailyAssessmentRequired: Boolean(s.daily_assessment_required), comment: str(s.comment), sessionStatus: sessionStatus(str(s.date), Number(s.mark_count) ? ["P"] : [], this.today(), Boolean(s.scheduled)) })), notices }; }
 
  async competencySummary(ownerId: string, courseId: string) {
   await this.ensureOwner(ownerId);
