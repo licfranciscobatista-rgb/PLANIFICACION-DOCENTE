@@ -126,9 +126,13 @@ export class RegistroService {
  private validateStudents(rows: { studentId: string }[], roster: Student[]) { const valid = new Set(roster.map(x => x.id)), seen = new Set<string>(); for (const row of rows) { if (!valid.has(row.studentId)) throw new AppError(400, "Hay un estudiante que no pertenece a este curso.", "CROSS_COURSE"); if (seen.has(row.studentId)) throw new AppError(400, "Un estudiante aparece más de una vez en el lote."); seen.add(row.studentId); } }
  private async log(tx: DBAdapter, ownerId: string, operation: string, entityId: string, before: unknown, after: unknown) { await tx.query("INSERT INTO audit_entries(id,owner_id,operation,entity_id,before_data,after_data) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)", [randomUUID(), ownerId, operation, entityId, JSON.stringify(before), JSON.stringify(after)]); }
  private async evaluationCriteria(ownerId:string,tx:DBAdapter=this.db,activeOnly=true):Promise<EvaluationCriterion[]>{
-  const criteria=(await tx.query(`SELECT id,label,levels,active FROM evaluation_criteria WHERE owner_id=$1 ${activeOnly?"AND active=true":""} ORDER BY label,id`,[ownerId])).rows;
+  const [criteriaResult,valuesResult]=await Promise.all([
+   tx.query(`SELECT id,label,levels,active FROM evaluation_criteria WHERE owner_id=$1 ${activeOnly?"AND active=true":""} ORDER BY label,id`,[ownerId]),
+   tx.query("SELECT criterion_id,level_label,points,descriptor FROM evaluation_criterion_values WHERE owner_id=$1 ORDER BY criterion_id,level_position",[ownerId]),
+  ]);
+  const criteria=criteriaResult.rows;
   if(!criteria.length)return [];
-  const rows=(await tx.query("SELECT criterion_id,level_label,points,descriptor FROM evaluation_criterion_values WHERE owner_id=$1 ORDER BY criterion_id,level_position",[ownerId])).rows;
+  const rows=valuesResult.rows;
   const values=new Map<string,EvaluationCriterion['levels']>();
   for(const row of rows){const id=str(row.criterion_id);const list=values.get(id)??[];list.push({label:str(row.level_label),points:Number(row.points),description:str(row.descriptor)});values.set(id,list);}
   return criteria.map(row=>({id:str(row.id),label:str(row.label),levels:values.get(str(row.id))??json(row.levels,[]),active:Boolean(row.active)}));
@@ -145,6 +149,20 @@ export class RegistroService {
   if(assignments.length!==base.rubric.length)throw new AppError(500,"Los criterios relacionados con la actividad no coinciden con su comprobante de valoración.","ACTIVITY_CRITERIA_MISMATCH");
   const rubric:RubricCriterion[]=assignments.map(item=>{const indicatorId=str(item.indicator_id);const indicator=base.indicatorPoints.find(point=>point.indicatorId===indicatorId)?.label??"";return {id:str(item.criterion_key),label:str(item.criterion_label),indicatorId,indicator,competency:str(item.competency) as CompetencyKey,weight:Number(item.weight),levels:json(item.levels_snapshot,[])};});
   return {...base,rubric};
+ }
+ private async activitiesWithCriteria(ownerId:string,rows:Row[]):Promise<Activity[]>{
+  const activities=rows.map(activity);
+  if(!activities.length)return [];
+  const assignments=(await this.db.query("SELECT activity_id,criterion_key,criterion_label,indicator_id,competency,weight,position,levels_snapshot FROM activity_criteria WHERE owner_id=$1 AND activity_id=ANY($2::uuid[]) ORDER BY activity_id,position",[ownerId,activities.map(item=>item.id)])).rows;
+  const byActivity=new Map<string,Row[]>();
+  for(const assignment of assignments){const id=str(assignment.activity_id);const list=byActivity.get(id)??[];list.push(assignment);byActivity.set(id,list);}
+  return activities.map(base=>{
+   const related=byActivity.get(base.id)??[];
+   if(!related.length)return base;
+   if(related.length!==base.rubric.length)throw new AppError(500,"Los criterios relacionados con la actividad no coinciden con su comprobante de valoración.","ACTIVITY_CRITERIA_MISMATCH");
+   const rubric:RubricCriterion[]=related.map(item=>{const indicatorId=str(item.indicator_id);const indicator=base.indicatorPoints.find(point=>point.indicatorId===indicatorId)?.label??"";return {id:str(item.criterion_key),label:str(item.criterion_label),indicatorId,indicator,competency:str(item.competency) as CompetencyKey,weight:Number(item.weight),levels:json(item.levels_snapshot,[])};});
+   return {...base,rubric};
+  });
  }
  private async operation<T extends SaveReceipt>(ownerId: string, requestId: string, payload: unknown, work: (tx: DBAdapter, operationId: string) => Promise<T>): Promise<T> {
   const hash = payloadHash(payload);
@@ -165,15 +183,20 @@ export class RegistroService {
 
  async bootstrap(ownerId: string): Promise<Bootstrap> {
   await this.ensureOwner(ownerId);
-  const courses: Course[] = [];
-  const cr = await this.db.query("SELECT id,code,name FROM courses WHERE owner_id=$1 ORDER BY code", [ownerId]);
-  for (const c of cr.rows) courses.push({ id: str(c.id), code: str(c.code), name: str(c.name), students: await this.roster(ownerId, str(c.id)) });
-  const current = await this.currentPlan(ownerId);
-  const plans = (await this.db.query("SELECT config FROM evaluation_plans WHERE owner_id=$1 ORDER BY period", [ownerId])).rows.map(row => normalizedPlan(json(row.config, plan())));
-  const curriculumSequence=await this.curriculumSequence(ownerId);
-  const criteriaCatalog=await this.evaluationCriteria(ownerId);
-  const activityRows=(await this.db.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 ORDER BY period,activity_date,title,id`,[ownerId])).rows;
-  const activities=await Promise.all(activityRows.map(row=>this.activityWithCriteria(ownerId,row)));
+  const [courseResult,studentsResult,current,plansResult,curriculumSequence,criteriaCatalog,activityResult]=await Promise.all([
+   this.db.query("SELECT id,code,name FROM courses WHERE owner_id=$1 ORDER BY code", [ownerId]),
+   this.db.query("SELECT id,course_id,external_id,number,name,active FROM students WHERE owner_id=$1 ORDER BY course_id,number,id",[ownerId]),
+   this.currentPlan(ownerId),
+   this.db.query("SELECT config FROM evaluation_plans WHERE owner_id=$1 ORDER BY period", [ownerId]),
+   this.curriculumSequence(ownerId),
+   this.evaluationCriteria(ownerId),
+   this.db.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 ORDER BY period,activity_date,title,id`,[ownerId]),
+  ]);
+  const studentsByCourse=new Map<string,Student[]>();
+  for(const row of studentsResult.rows){const item=student(row);const list=studentsByCourse.get(item.courseId)??[];list.push(item);studentsByCourse.set(item.courseId,list);}
+  const courses:Course[]=courseResult.rows.map(row=>{const id=str(row.id);return {id,code:str(row.code),name:str(row.name),students:studentsByCourse.get(id)??[]};});
+  const plans=plansResult.rows.map(row=>normalizedPlan(json(row.config,plan())));
+  const activities=await this.activitiesWithCriteria(ownerId,activityResult.rows);
   return { courses, activities, plan: current, plans, curriculumSequence, criteriaCatalog, today: this.today(), demo: Boolean(this.options.demo), demoNote: this.options.demoNote, ownerId };
  }
 
