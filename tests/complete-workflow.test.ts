@@ -254,3 +254,35 @@ test('una actividad evaluada en P2 conserva el vínculo exacto con una clase pla
  assert.equal(attendanceAfter.session.id,attendanceBefore.session.id,'Crear y calificar no debe crear ni confirmar una asistencia.');
  assert.equal(attendanceAfter.session.status,attendanceBefore.session.status);
 });
+
+test('el plan de clase es independiente por curso y enlaza contenido P1 con evaluación P2 usando el calendario de asistencia',async()=>{
+ const owner='course-specific-planning-flow';
+ const course=await service.createCourse(owner,{code:'6Y',name:'Sexto Y · Ciencias',startDate:'2026-11-02',endDate:'2026-11-30',weekly:[{weekday:1,blocks:[1]},{weekday:3,blocks:[1]}]});
+ const roster=await service.importRoster(owner,course.id,[{externalId:'s-1',number:1,name:'Estudiante Uno'},{externalId:'s-2',number:2,name:'Estudiante Dos'}]);
+ const indicator={id:'course-plan-ind-1',code:'I1',label:'Explica el contenido',competency:'comunicativa' as const};
+ const sequence:SequencePlan={source:'manual',sourceName:'',sourceText:'',reviewed:true,indicators:[indicator],activities:[{id:'course-plan-seq-1',code:'1.1',theme:'Contenido de P1',title:'Actividad que se atrasó',lessonType:'practica',description:'Resolver y explicar',evidence:'Trabajo del estudiante',indicatorIds:[indicator.id],period:'P1'}]};
+ await service.saveCurriculumSequence(owner,sequence);
+ const schoolDay=await service.attendance(owner,course.id,'2026-11-11',1);
+ await service.saveAttendance(owner,{requestId:randomUUID(),courseId:course.id,date:'2026-11-11',block:1,revision:schoolDay.session.revision,lessonType:'actividad_escolar',topic:'Taller de lectura',rows:roster.map(student=>({studentId:student.id,status:'P'}))});
+ const planned=await service.saveCourseSequencePlan(owner,{requestId:randomUUID(),courseId:course.id,sequenceActivityId:'course-plan-seq-1',startDate:'2026-11-09',endDate:'2026-11-11',assessmentPeriod:'P2',assessmentCategory:'exam',assessmentMethod:'points',assessmentFormat:'Examen'});
+ assert.equal(planned.sequenceTitle,'Actividad que se atrasó');assert.equal(planned.assessmentPeriod,'P2');assert.equal(planned.assessmentCategory,'exam');
+ const otherCourse=(await service.bootstrap(owner)).courses.find(item=>item.id!==course.id)!;
+ assert.deepEqual(await service.courseSequencePlans(owner,otherCourse.id),[],'el calendario de un curso no copia los planes al resto');
+ const suggestions=await service.courseSequencePlans(owner,course.id);
+ assert.equal(suggestions[0]?.scheduledSessions,2);
+ assert.equal(suggestions[0]?.missedSessions,2,'un día sin asistencia y un taller escolar cuentan como contenido no impartido');
+ assert.equal(suggestions[0]?.schoolActivitySessions,1);
+ assert.equal(suggestions[0]?.nextSessionDate,'2026-11-18','la recomendación desplaza el cierre tantas sesiones como se perdieron');
+ const activity=await service.createActivity(owner,{requestId:randomUUID(),courseId:course.id,coursePlanId:planned.id,period:'P2',category:'exam',title:'Actividad que se atrasó',date:'2026-11-11',maxPoints:10,scoringMode:'points',sequenceActivityId:'course-plan-seq-1',instrument:'Puntaje directo',purpose:'Examen'});
+ assert.equal(activity.period,'P2','el período de calificación lo elige el docente');
+ assert.equal(activity.category,'exam','la planificación por curso decide a qué columna de calificación se acredita');
+ assert.equal(activity.sequencePlannedPeriod,'P1','se conserva el período didáctico de la secuencia original');
+ assert.equal(activity.courseId,course.id,'la evaluación se crea solo en el curso preparado');
+ const planAfter=await service.courseSequencePlans(owner,course.id);
+ assert.equal(planAfter[0]?.activityId,activity.id);assert.equal(planAfter[0]?.activityReady,true);
+ const gradeRows=(await service.grades(owner,activity.id)).rows.map((student,index)=>({studentId:student.studentId,score:index===0?8:null,criterionLevels:null,comment:''}));
+ await service.saveGrades(owner,{requestId:randomUUID(),activityId:activity.id,revision:activity.revision,rows:gradeRows});
+ const report=await service.report(owner,course.id,roster[0]!.id,'P2');
+ assert.equal(report.grades.find(item=>item.activityId===activity.id)?.score,8,'la nota aparece en el P2 y conserva el vínculo al contenido P1');
+ await assert.rejects(service.createActivity(owner,{requestId:randomUUID(),courseId:otherCourse.id,coursePlanId:planned.id,period:'P2',category:'sequence',title:'Debe rechazarse',date:'2026-11-11',maxPoints:10,scoringMode:'points',sequenceActivityId:'course-plan-seq-1'}),/plan de clase de este curso/);
+});

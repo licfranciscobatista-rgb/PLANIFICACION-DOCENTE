@@ -203,6 +203,32 @@ CREATE INDEX IF NOT EXISTS idx_activity_shared ON activities(owner_id,shared_id)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_notebook ON activities(owner_id,course_id,activity_date,block) WHERE category='notebook';
 CREATE INDEX IF NOT EXISTS idx_audit_owner_date ON audit_entries(owner_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evaluation_criteria_owner ON evaluation_criteria(owner_id,active,label);
+-- Course-level instructional calendar. The teaching dates stay independent from
+-- the evaluation period that receives the resulting grade.
+CREATE TABLE IF NOT EXISTS course_sequence_plans (
+ id uuid PRIMARY KEY,
+ owner_id text NOT NULL,
+ course_id uuid NOT NULL,
+ sequence_activity_id text NOT NULL,
+ start_date date NOT NULL,
+ end_date date NOT NULL,
+ assessment_period text,
+ assessment_category text CHECK(assessment_category IS NULL OR assessment_category IN ('exam','sequence','homework','extra')),
+ assessment_method text NOT NULL DEFAULT 'pending' CHECK(assessment_method IN ('pending','points','rubric')),
+ assessment_format text NOT NULL DEFAULT '',
+ activity_id uuid,
+ revision integer NOT NULL DEFAULT 0 CHECK(revision>=0),
+ active boolean NOT NULL DEFAULT true,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ CHECK(end_date>=start_date),
+ FOREIGN KEY(course_id,owner_id) REFERENCES courses(id,owner_id),
+ FOREIGN KEY(activity_id,course_id,owner_id) REFERENCES activities(id,course_id,owner_id),
+ FOREIGN KEY(owner_id,assessment_period) REFERENCES evaluation_plans(owner_id,period)
+);
+ALTER TABLE course_sequence_plans ADD COLUMN IF NOT EXISTS assessment_category text CHECK(assessment_category IS NULL OR assessment_category IN ('exam','sequence','homework','extra'));
+CREATE INDEX IF NOT EXISTS idx_course_sequence_plans_course_date ON course_sequence_plans(owner_id,course_id,start_date,end_date) WHERE active=true;
+CREATE INDEX IF NOT EXISTS idx_course_sequence_plans_sequence ON course_sequence_plans(owner_id,sequence_activity_id,course_id) WHERE active=true;
 CREATE TABLE IF NOT EXISTS period_score_plans (
  owner_id text NOT NULL, period text NOT NULL, revision integer NOT NULL DEFAULT 0,
  enabled boolean NOT NULL DEFAULT false, columns jsonb NOT NULL DEFAULT '[]'::jsonb,
