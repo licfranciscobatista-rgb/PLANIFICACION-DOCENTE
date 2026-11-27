@@ -50,24 +50,35 @@ test('curso, horario, secuencia, catálogo, valoración por indicador y notas si
   {id:criterionB.id,label:criterionB.label,indicatorId:indicatorTwo.id,weight:1,levels:criterionB.levels,competency:indicatorTwo.competency},
  ];
  const staleClientRubric=rubric.map(item=>({...item,label:'Texto local desactualizado',levels:item.levels.map(level=>({...level,description:'Texto local que no debe reemplazar el catálogo.'}))}));
- await service.configureActivityEvaluation(owner,{requestId:randomUUID(),activityId:first.id,revision:first.revision,scoringMode:'rubric',instrument:'Rúbrica analítica',indicatorPoints:[{indicatorId:indicatorOne.id,points:6},{indicatorId:indicatorTwo.id,points:4}],rubric:staleClientRubric});
- const configured=(await service.bootstrap(owner)).activities.filter(item=>item.sharedId===first.sharedId);
- assert.equal(configured.length,3);assert.ok(configured.every(item=>item.indicatorPoints.reduce((sum,allocation)=>sum+allocation.points,0)===10));
- assert.deepEqual(configured[0].rubric.map(item=>[item.label,item.levels[0].description]),[[criterionA.label,levels[0].description],[criterionB.label,levels[0].description]],'el servidor trae nombre y descriptores vigentes del catálogo al colocar los criterios en la actividad');
- for(const configuredActivity of configured){
+ await service.configureActivityEvaluation(owner,{requestId:randomUUID(),activityId:first.id,revision:first.revision,scoringMode:'rubric',instrument:'Rúbrica analítica',indicatorPoints:[{indicatorId:indicatorOne.id,points:6},{indicatorId:indicatorTwo.id,points:4}],rubric:staleClientRubric,applyToActivityIds:shared.filter(item=>item.id!==first.id).map(item=>item.id)});
+ let configured=(await service.bootstrap(owner)).activities.filter(item=>item.sharedId===first.sharedId);
+ assert.equal(configured.length,3);assert.equal(configured.filter(item=>item.scoringMode==='rubric'&&item.rubric.length===2&&item.indicatorPoints.length===2).length,3,'al crear una actividad compartida, su matriz inicial queda lista para la lista completa de cada curso');
+ assert.deepEqual(configured.find(item=>item.courseId===first.courseId)!.rubric.map(item=>[item.label,item.levels[0].description]),[[criterionA.label,levels[0].description],[criterionB.label,levels[0].description]],'el servidor trae nombre y descriptores vigentes del catálogo al colocar los criterios en la actividad');
+ for(const configuredActivity of configured.filter(item=>item.courseId===first.courseId)){
   const assignments=await db.query('SELECT criterion_key,catalog_criterion_id,indicator_id,position,levels_snapshot FROM activity_criteria WHERE owner_id=$1 AND activity_id=$2 ORDER BY position',[owner,configuredActivity.id]);
   assert.equal(assignments.rows.length,2,'cada copia por curso recibe los criterios de la misma actividad');
   assert.deepEqual(assignments.rows.map(row=>[row.criterion_key,row.catalog_criterion_id,row.indicator_id,Number(row.position)]),[[criterionA.id,criterionA.id,indicatorOne.id,1],[criterionB.id,criterionB.id,indicatorTwo.id,2]]);
   const levelSnapshot=assignments.rows[0].levels_snapshot;assert.equal((Array.isArray(levelSnapshot)?levelSnapshot:JSON.parse(String(levelSnapshot))).length,4,'la actividad conserva la valoración que seleccionó del catálogo');
  }
 
- const courseA=courses.find(course=>course.code==='5A')!;const courseB=courses.find(course=>course.code==='5B')!;
+ const courseB=courses.find(course=>course.code==='5B')!;const courseC=courses.find(course=>course.code==='5C')!;
+ const bActivityBefore=configured.find(item=>item.courseId===courseB.id)!;
+ await service.configureActivityEvaluation(owner,{requestId:randomUUID(),activityId:bActivityBefore.id,revision:bActivityBefore.revision,scoringMode:'points',instrument:'Puntaje directo',indicatorPoints:[],rubric:[]});
+ configured=(await service.bootstrap(owner)).activities.filter(item=>item.sharedId===first.sharedId);
+ assert.equal(configured.find(item=>item.courseId===courseB.id)?.scoringMode,'points','5B puede usar puntos directos para el mismo contenido');
+ assert.equal(configured.find(item=>item.courseId===courseC.id)?.scoringMode,'rubric','cambiar solo 5B no modifica la preparación inicial independiente de 5C');
+ assert.equal(configured.find(item=>item.courseId===courses.find(course=>course.code==='5A')!.id)?.scoringMode,'rubric','cambiar solo 5B conserva la rúbrica de 5A');
+
+ const courseA=courses.find(course=>course.code==='5A')!;
  const aActivity=configured.find(item=>item.courseId===courseA.id)!;const bActivity=configured.find(item=>item.courseId===courseB.id)!;
  const aRows=(await service.grades(owner,aActivity.id)).rows;
  const bRows=(await service.grades(owner,bActivity.id)).rows;
+ assert.equal(aRows.length,courseA.students.length,'una actividad de 5A abre la lista completa del curso en una sola matriz');
+ assert.equal(new Set(aRows.map(row=>row.studentId)).size,courseA.students.length,'cada estudiante aparece una vez, no se duplica la actividad por alumno');
  const saveRows=(rows:typeof aRows,firstLevels:Record<string,number>)=>rows.map((student,index)=>({studentId:student.studentId,score:null,criterionLevels:index===0?firstLevels:null,comment:''}));
  await service.saveGrades(owner,{requestId:randomUUID(),activityId:aActivity.id,revision:aActivity.revision,rows:saveRows(aRows,{[criterionA.id]:3,[criterionB.id]:1})});
- await service.saveGrades(owner,{requestId:randomUUID(),activityId:bActivity.id,revision:bActivity.revision,rows:saveRows(bRows,{[criterionA.id]:0,[criterionB.id]:0})});
+ assert.equal(Number((await db.query('SELECT COUNT(*) AS total FROM grades WHERE owner_id=$1 AND activity_id=$2',[owner,aActivity.id])).rows[0]!.total),courseA.students.length,'un solo guardado incluye una fila de calificación por estudiante del curso');
+ await service.saveGrades(owner,{requestId:randomUUID(),activityId:bActivity.id,revision:bActivity.revision,rows:bRows.map((student,index)=>({studentId:student.studentId,score:index===0?7:null,criterionLevels:null,comment:''}))});
  const savedRatings=await db.query('SELECT criterion_key,level_position,level_label,points,descriptor FROM grade_criterion_ratings WHERE owner_id=$1 AND activity_id=$2 AND student_id=$3 ORDER BY criterion_key',[owner,aActivity.id,courseA.students[0].id]);
  const expectedRatings=[[criterionA.id,3,'Excelente',4,'Lo logra y lo justifica.'],[criterionB.id,1,'Suficiente',2,'Lo logra parcialmente.']].sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
  assert.deepEqual(savedRatings.rows.map(row=>[row.criterion_key,Number(row.level_position),row.level_label,Number(row.points),row.descriptor]),expectedRatings,'cada selección del alumno queda en su propio registro relacionado con criterio y actividad');
@@ -94,7 +105,8 @@ test('curso, horario, secuencia, catálogo, valoración por indicador y notas si
  const reportA=await service.report(owner,courseA.id,courseA.students[0].id);
  const reportB=await service.report(owner,courseB.id,courseB.students[0].id);
  assert.equal(reportA.grades.find(item=>item.activityId===aActivity.id)?.score,8);
- assert.equal(reportB.grades.find(item=>item.activityId===bActivity.id)?.score,2.5);
+ assert.equal(reportB.grades.find(item=>item.activityId===bActivity.id)?.score,7,'la nota directa de 5B llega al mismo reporte sin mezclarse con la rúbrica de 5A');
+ assert.equal(bActivity.scoringMode,'points');assert.equal(bActivity.indicatorPoints.length,0);assert.equal(bActivity.rubric.length,0,'la configuración directa de 5B no conserva criterios ni ponderaciones de competencias');
  const competencyA=new Map(reportA.competencies.map(item=>[item.key,item]));
  assert.equal(competencyA.get('logico_matematica')?.points,6);assert.equal(competencyA.get('logico_matematica')?.possible,6);
  assert.equal(competencyA.get('resolucion')?.points,2);assert.equal(competencyA.get('resolucion')?.possible,4);
@@ -107,6 +119,11 @@ test('curso, horario, secuencia, catálogo, valoración por indicador y notas si
  assert.equal(ledgerA.scores.find(score=>score.key===precisionColumn.key)?.possible,6);
  assert.equal(ledgerA.scores.find(score=>score.key===justificationColumn.key)?.points,2);
  assert.equal(ledgerA.scores.find(score=>score.key===justificationColumn.key)?.possible,4);
+ const courseMatrix=await service.teacherLedger(owner,period.period,courseA.id);
+ assert.equal(new Set(courseMatrix.rows.map(row=>row.course.id)).size,1,'la matriz del curso solo contiene los estudiantes del curso abierto');
+ assert.ok(courseMatrix.rows.every(row=>row.course.id===courseA.id));
+ assert.ok(courseMatrix.groups.flatMap(group=>group.columns).every(column=>column.courseIds.includes(courseA.id)),'las columnas conservan sus evaluaciones asignadas al curso seleccionado');
+ await assert.rejects(service.teacherLedger(owner,period.period,'00000000-0000-4000-8000-000000000000'),/curso/,'no debe abrir una matriz con un identificador inexistente');
 
  const planP1:EvaluationPlan={...period,categories:period.categories.map(item=>({...item})),period:'P1',startDate:'2026-10-20',endDate:'2026-11-01',sequence:undefined};
  await service.updatePlan(owner,planP1);
@@ -116,6 +133,57 @@ test('curso, horario, secuencia, catálogo, valoración por indicador y notas si
  const mergedSequence=(await service.bootstrap(owner)).curriculumSequence!;
  assert.ok(mergedSequence.activities.some(item=>item.id==='legacy:P1:seq-p1'&&item.period==='P1'),'El flujo anual debe reconstruir y exponer vínculos de secuencias guardadas en planes anteriores.');
  assert.equal((await service.teacherLedger(owner,'P1')).period,'P1');
+});
+
+test('actividad común preparada queda fuera de notas hasta activarla por curso y conserva ese alcance',async()=>{
+ const owner='course-scoped-grading-flow';
+ const courses=(await service.bootstrap(owner)).courses;
+ const fiveA=courses.find(course=>course.code==='5A')!;
+ const fiveB=courses.find(course=>course.code==='5B')!;
+ const created=await service.createSharedActivity(owner,{courseIds:[fiveA.id,fiveB.id],activity:{category:'exam',title:'Examen elegido por curso',date:'2026-11-20',maxPoints:10,instrument:'Puntaje directo',activeForGrading:false,requestId:randomUUID()}});
+ const copyA=created.find(activity=>activity.courseId===fiveA.id)!;
+ const copyB=created.find(activity=>activity.courseId===fiveB.id)!;
+ assert.equal(copyA.activeForGrading,false);
+ assert.equal(copyB.activeForGrading,false);
+ await assert.rejects(service.grades(owner,copyA.id),/aún no está incluida/);
+ await assert.rejects(service.saveGrades(owner,{requestId:randomUUID(),activityId:copyA.id,revision:copyA.revision,rows:[{studentId:fiveA.students[0]!.id,score:8}]}),/aún no está incluida/);
+ const beforeReport=await service.report(owner,fiveA.id,fiveA.students[0]!.id);
+ assert.ok(!beforeReport.grades.some(grade=>grade.activityId===copyA.id),'la actividad preparada no aparece como pendiente en el informe antes de elegirla');
+ const beforeLedger=await service.teacherLedger(owner,'P2',fiveA.id);
+ assert.ok(!beforeLedger.groups.flatMap(group=>group.columns).some(column=>column.label.includes('Examen elegido por curso')),'la actividad preparada no crea una columna evaluable antes de activarla');
+
+ const activated=await service.setActivityGradingState(owner,{requestId:randomUUID(),activityId:copyA.id,revision:copyA.revision,active:true});
+ assert.equal(activated.activeForGrading,true);
+ assert.equal((await service.bootstrap(owner)).activities.find(activity=>activity.id===copyB.id)?.activeForGrading,false,'activar 5A no modifica la copia de 5B');
+ assert.equal((await service.grades(owner,copyA.id)).rows.length,fiveA.students.length,'la matriz activa incluye a todo el curso en una sola captura');
+ await assert.rejects(service.grades(owner,copyB.id),/aún no está incluida/);
+ await service.saveGrades(owner,{requestId:randomUUID(),activityId:copyA.id,revision:activated.revision,rows:[{studentId:fiveA.students[0]!.id,score:8}]});
+ const afterReport=await service.report(owner,fiveA.id,fiveA.students[0]!.id);
+ assert.equal(afterReport.grades.find(grade=>grade.activityId===copyA.id)?.score,8);
+ await assert.rejects(service.setActivityGradingState(owner,{requestId:randomUUID(),activityId:copyA.id,revision:activated.revision+1,active:false}),/ya tiene notas/);
+});
+
+test('horario docente se guarda aislado por cuenta, valida franjas y propone bloques sin mezclarlos entre maestros',async()=>{
+ const ownerA='timetable-teacher-a';const ownerB='timetable-teacher-b';
+ const bootstrapA=await service.bootstrap(ownerA);const bootstrapB=await service.bootstrap(ownerB);
+ const courseA=bootstrapA.courses.find(course=>course.code==='5A')!;
+ const courseB=bootstrapB.courses.find(course=>course.code==='5A')!;
+ assert.notEqual(courseA.id,courseB.id);
+ assert.deepEqual(await service.teacherTimetable(ownerA),{revision:0,entries:[]});
+ const first={id:randomUUID(),weekday:1,startTime:'08:00',endTime:'08:50',courseId:courseA.id,block:1};
+ const second={id:randomUUID(),weekday:1,startTime:'09:00',endTime:'09:50',courseId:courseA.id,block:2};
+ const saved=await service.saveTeacherTimetable(ownerA,{revision:0,entries:[first,second]});
+ assert.equal(saved.revision,1);assert.deepEqual(saved.entries,[first,second]);
+ assert.equal((await service.teacherTimetable(ownerA)).entries.length,2,'se conserva todo el horario en Neon/DB para esa cuenta');
+ assert.deepEqual(await service.teacherTimetable(ownerB),{revision:0,entries:[]},'otro maestro no recibe las franjas del primero');
+ await assert.rejects(service.saveTeacherTimetable(ownerA,{revision:1,entries:[first,{...second,startTime:'08:40',endTime:'09:30'}]}),/superponen/);
+ await assert.rejects(service.saveTeacherTimetable(ownerA,{revision:1,entries:[{...first,endTime:'07:00'}]}),/hora final/);
+ await assert.rejects(service.saveTeacherTimetable(ownerB,{revision:0,entries:[{...first,courseId:courseA.id}]}),/no pertenece/);
+ await assert.rejects(service.saveTeacherTimetable(ownerA,{revision:0,entries:[]}),/cambió/);
+ const cleared=await service.saveTeacherTimetable(ownerA,{revision:1,entries:[]});
+ assert.equal(cleared.revision,2);assert.deepEqual(cleared.entries,[],'el docente puede vaciar y volver a configurar su horario');
+ const exported=await service.exportData(ownerA);
+ assert.equal((exported.teacherTimetable as {length:number}[]).length,1,'el respaldo exporta el horario del docente');
 });
 
 test('actividad manual sin secuencia conserva indicadores, competencias, rúbrica y notas en el libro',async()=>{

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { DBAdapter } from "./db";
-import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceImportEntry, AttendanceImportRecord, AttendanceImportReceipt, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, CourseSequencePlanView, DailyAssessmentInput, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, IndicatorUsageRecord, PERIOD_START, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan } from "./model";
+import { Activity, ActivityCategoryKey, ActivityIndicatorPoint, ActivityInput, AppError, AttendanceImportEntry, AttendanceImportRecord, AttendanceImportReceipt, AttendanceInput, AttendanceRow, AttendanceView, AuditEntry, Bootstrap, CategoryReport, CompetencyKey, CompetencyScore, COMPETENCY_GROUPS, COURSE_SIZES, Course, CourseRegisterSummary, CourseSequencePlanView, DailyAssessmentInput, EvaluationCriterion, EvaluationPlan, GradeRow, GradesInput, GradesView, IndicatorUsageRecord, PERIOD_START, RubricCriterion, RosterRow, SaveReceipt, ServiceOptions, SharedActivityInput, Student, StudentReport, TeacherLedgerSummary, SequenceActivity, SequencePlan, TeacherTimetable, TeacherTimetableInput, TeacherTimetableEntry } from "./model";
 import { payloadHash, plan, requireDate, round, rubricMaximum, rubricScore, sessionStatus, todayInSchool } from "./engine";
 import classCalendar from "./data/class-schedule-2026-27.json";
 import { readPeriodSheet, periodSheetResult, studentPeriodSheet, savePeriodSheetPlan, savePeriodSheetGrades } from './period-sheet';
+import { isActivityEvaluationReady } from './evaluation-readiness';
 
 type Row = Record<string, unknown>;
 const uid = z.string().uuid();
@@ -17,7 +18,7 @@ const rubricLevelSchema = z.object({ label: z.string().trim().min(1).max(100), p
 const rubricLevelsSchema = z.array(rubricLevelSchema).min(2).max(6);
 const sourceAssessmentSchema = z.object({ annexNumber:z.number().int().min(1).max(99), title:z.string().max(500), kind:z.enum(["checklist","rubric","scale","exam_guide"]), criteria:z.array(z.string().max(1000)).max(100), levels:rubricLevelsSchema.or(z.array(rubricLevelSchema).length(0)), maxPoints:z.number().finite().nonnegative().max(10000).nullable(), scoringNote:z.string().max(2000), scored:z.boolean(), relatedIndicatorText:z.string().max(2000).optional(), relatedCompetencyText:z.string().max(2000).optional() });
 const finalAssessmentSchema = z.object({ title:z.string().max(250), period:z.string().max(2), internalMaxPoints:z.number().finite().positive().max(10000).nullable(), periodPoints:z.number().finite().nonnegative().max(10000).nullable(), instrument:sourceAssessmentSchema });
-const activitySchema = z.object({ courseId: uid, period:z.enum(["P1","P2","P3","P4"]).optional(), coursePlanId:uid.optional(), category: z.enum(["exam", "participation", "notebook", "sequence", "homework", "extra"]), title: z.string().trim().min(1).max(250), date: z.string(), block: z.number().int().min(1).max(12).optional(), maxPoints: z.number().finite().positive().max(10000), scoringMode: z.enum(["points", "rubric"]).optional(), rubric: z.array(z.object({ id: z.string().min(1).max(100), label: z.string().trim().min(1).max(200), competency: competencyKey.nullable().optional(), indicator: z.string().max(500).optional(), weight: z.number().finite().positive().max(10000).optional(), levels: rubricLevelsSchema })).optional(), description: text.optional(), sequenceCode: z.string().max(80).optional(), sequenceActivityId: z.string().min(1).max(100).optional(), evidence: z.string().max(1000).optional(), instrument: z.string().max(250).optional(), purpose: z.string().max(500).optional(), competency: competencyKey.nullable().optional(), indicator: z.string().max(500).optional(), requestId: z.string().min(1).max(200).optional() });
+const activitySchema = z.object({ courseId: uid, period:z.enum(["P1","P2","P3","P4"]).optional(), coursePlanId:uid.optional(), category: z.enum(["exam", "participation", "notebook", "sequence", "homework", "extra"]), title: z.string().trim().min(1).max(250), date: z.string(), block: z.number().int().min(1).max(12).optional(), maxPoints: z.number().finite().positive().max(10000), scoringMode: z.enum(["points", "rubric"]).optional(), rubric: z.array(z.object({ id: z.string().min(1).max(100), label: z.string().trim().min(1).max(200), competency: competencyKey.nullable().optional(), indicator: z.string().max(500).optional(), weight: z.number().finite().positive().max(10000).optional(), levels: rubricLevelsSchema })).optional(), description: text.optional(), sequenceCode: z.string().max(80).optional(), sequenceActivityId: z.string().min(1).max(100).optional(), evidence: z.string().max(1000).optional(), instrument: z.string().max(250).optional(), purpose: z.string().max(500).optional(), competency: competencyKey.nullable().optional(), indicator: z.string().max(500).optional(), activeForGrading:z.boolean().optional().default(true), requestId: z.string().min(1).max(200).optional() });
 const sharedActivitySchema = z.object({ courseIds: z.array(uid).min(1).max(20), activity: activitySchema.omit({ courseId: true }).extend({ requestId: z.string().min(1).max(200) }) });
 const courseSequencePlanSchema = z.object({requestId:z.string().min(1).max(200),id:uid.optional(),revision:z.number().int().min(0).optional(),courseId:uid,sequenceActivityId:z.string().trim().min(1).max(100),startDate:z.string(),endDate:z.string(),assessmentPeriod:z.enum(["P1","P2","P3","P4"]).nullable(),assessmentCategory:z.enum(["exam","sequence","homework","extra"]).nullable(),assessmentMethod:z.enum(["pending","points","rubric"]),assessmentFormat:z.string().trim().max(100)});
 const sequenceActivitySchema = z.object({ id:z.string().min(1).max(100), code:z.string().max(80), theme:z.string().max(250), title:z.string().trim().max(250), lessonType:z.enum(["teoria","practica","ejercicios","repaso","correcciones","actividad_escolar"]).nullable(), description:z.string().max(4000), evidence:z.string().max(1000), indicatorIds:z.array(z.string().min(1).max(100)).max(100), period:z.string().max(2).optional(), evaluationPurpose:z.enum(["diagnostica","formativa","sumativa","formativa_sumativa"]).nullable().optional(), plannedPoints:z.number().finite().nonnegative().max(10000).nullable().optional(), plannedPercent:z.number().finite().min(0).max(100).nullable().optional(), instrument:z.string().max(1000).optional(), evaluationCriteria:z.array(z.string().max(1000)).max(100).optional(), feedback:z.string().max(2000).optional(), assessmentInstrument:sourceAssessmentSchema.optional() });
@@ -30,8 +31,10 @@ const rosterRowSchema = z.object({ externalId: z.string().trim().min(1).max(200)
 const rosterBatchesSchema = z.array(z.object({ courseId: uid, rows: z.array(rosterRowSchema).min(1).max(250) })).min(1).max(20);
 const attendanceImportRowSchema = z.object({ courseId: uid, date: z.string(), block: z.number().int().min(1).max(12), studentId: uid, status: z.enum(["P", "A", "T", "E", "R"]), sourceSheet: z.string().min(1).max(200), sourceRow: z.number().int().positive(), sourceStudentName: z.string().max(250), sourceStudentNumber: z.number().int().positive().nullable() });
 const attendanceImportRowsSchema = z.array(attendanceImportRowSchema).min(1).max(30_000);
-const activityEvaluationSchema = z.object({ requestId:z.string().min(1).max(200), activityId:uid, revision:z.number().int().min(0), scoringMode:z.enum(["points","rubric"]), instrument:z.string().max(250), manualIndicators:z.array(z.object({id:z.string().min(1).max(100),code:z.string().max(80),label:z.string().trim().min(1).max(500),competency:competencyKey})).max(100).optional().default([]), indicatorPoints:z.array(z.object({indicatorId:z.string().min(1).max(100),points:z.number().finite().positive()})).max(100), rubric:z.array(z.object({id:z.string().min(1).max(100),label:z.string().trim().min(1).max(200),competency:competencyKey.nullable().optional(),indicator:z.string().max(500).optional(),indicatorId:z.string().min(1).max(100).optional(),weight:z.number().finite().positive().max(10000).optional(),levels:rubricLevelsSchema})).max(100) });
+const activityEvaluationSchema = z.object({ requestId:z.string().min(1).max(200), activityId:uid, revision:z.number().int().min(0), scoringMode:z.enum(["points","rubric"]), instrument:z.string().max(250), manualIndicators:z.array(z.object({id:z.string().min(1).max(100),code:z.string().max(80),label:z.string().trim().min(1).max(500),competency:competencyKey})).max(100).optional().default([]), indicatorPoints:z.array(z.object({indicatorId:z.string().min(1).max(100),points:z.number().finite().positive()})).max(100), rubric:z.array(z.object({id:z.string().min(1).max(100),label:z.string().trim().min(1).max(200),competency:competencyKey.nullable().optional(),indicator:z.string().max(500).optional(),indicatorId:z.string().min(1).max(100).optional(),weight:z.number().finite().positive().max(10000).optional(),levels:rubricLevelsSchema})).max(100), applyToActivityIds:z.array(uid).max(20).optional().default([]) });
+const activityGradingStateSchema = z.object({requestId:z.string().min(1).max(200),activityId:uid,revision:z.number().int().min(0),active:z.boolean()});
 const courseSchema = z.object({ code:z.string().trim().min(1).max(12).regex(/^[A-Za-z0-9_-]+$/), name:z.string().trim().min(1).max(120), startDate:z.string(), endDate:z.string(), weekly:z.array(z.object({weekday:z.number().int().min(1).max(7),blocks:z.array(z.number().int().min(1).max(12)).min(1).max(12)})).min(1).max(7).optional(), noClassDates:z.array(z.string()).max(100).default([]) });
+const timetableSchema=z.object({revision:z.number().int().min(0),entries:z.array(z.object({id:z.string().min(1).max(100),weekday:z.number().int().min(1).max(7),startTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),endTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),courseId:uid,block:z.number().int().min(1).max(12)})).max(150)});
 function parse<T>(schema: z.ZodType<T>, value: unknown): T { const r = schema.safeParse(value); if (!r.success) throw new AppError(400, "Datos inválidos: " + r.error.issues[0].message); return r.data; }
 function findLinkedSequenceActivity(sequence: SequencePlan | null | undefined, id: string | null | undefined, code: string | undefined, evaluationPeriod: string | null | undefined): SequenceActivity | undefined {
  if (!sequence) return undefined;
@@ -58,8 +61,8 @@ function num(value: unknown) { return value === null || value === undefined ? nu
 function str(value: unknown) { return value === null || value === undefined ? "" : String(value); }
 function json<T>(value: unknown, fallback: T): T { return value === null || value === undefined ? fallback : typeof value === "string" ? JSON.parse(value) as T : value as T; }
 function student(r: Row): Student { return { id: str(r.id), courseId: str(r.course_id), externalId: str(r.external_id), number: Number(r.number), name: str(r.name), active: Boolean(r.active) }; }
-function activity(r: Row): Activity { return { id: str(r.id), courseId: str(r.course_id), sharedId: str(r.shared_id) || null, period: str(r.period), category: r.category as Activity["category"], title: str(r.title), date: str(r.date), createdAt: str(r.created_at) || null, block: Number(r.block), maxPoints: Number(r.max_points), scoringMode: r.scoring_mode as Activity["scoringMode"], rubric: json(r.rubric, []), indicatorPoints: json(r.indicator_points, []), description: str(r.description), sequenceCode: str(r.sequence_code), sequenceActivityId: str(r.sequence_activity_id) || null, sequencePlannedPeriod: str(r.sequence_planned_period) || null, evidence: str(r.evidence), instrument: str(r.instrument), purpose: str(r.activity_purpose), competency: str(r.competency) as CompetencyKey || null, indicator: str(r.indicator), revision: Number(r.revision) }; }
-const activityFields = "id,course_id,shared_id,period,category,title,activity_date::text AS date,created_at::text AS created_at,block,max_points,scoring_mode,rubric,indicator_points,description,sequence_code,sequence_activity_id,sequence_planned_period,evidence,instrument,activity_purpose,competency,indicator,revision";
+function activity(r: Row): Activity { return { id: str(r.id), courseId: str(r.course_id), sharedId: str(r.shared_id) || null, period: str(r.period), category: r.category as Activity["category"], title: str(r.title), date: str(r.date), createdAt: str(r.created_at) || null, block: Number(r.block), maxPoints: Number(r.max_points), scoringMode: r.scoring_mode as Activity["scoringMode"], rubric: json(r.rubric, []), indicatorPoints: json(r.indicator_points, []), description: str(r.description), sequenceCode: str(r.sequence_code), sequenceActivityId: str(r.sequence_activity_id) || null, sequencePlannedPeriod: str(r.sequence_planned_period) || null, evidence: str(r.evidence), instrument: str(r.instrument), purpose: str(r.activity_purpose), competency: str(r.competency) as CompetencyKey || null, indicator: str(r.indicator), activeForGrading: r.active_for_grading === undefined ? true : Boolean(r.active_for_grading), revision: Number(r.revision) }; }
+const activityFields = "id,course_id,shared_id,period,category,title,activity_date::text AS date,created_at::text AS created_at,block,max_points,scoring_mode,rubric,indicator_points,description,sequence_code,sequence_activity_id,sequence_planned_period,evidence,instrument,activity_purpose,competency,indicator,active_for_grading,revision";
 const defaultCompetency: Record<ActivityCategoryKey, CompetencyKey> = { exam: "logico_matematica", participation: "desarrollo_personal", notebook: "logico_matematica", sequence: "logico_matematica", homework: "logico_matematica", extra: "logico_matematica" };
 function defaultForCategory(key: ActivityCategoryKey): CompetencyKey { return defaultCompetency[key] ?? "logico_matematica"; }
 function normalizedPlan(value: EvaluationPlan): EvaluationPlan { return { ...value, categories: value.categories.map(c => ({ ...c, competency: c.competency ?? defaultForCategory(c.key) })) }; }
@@ -300,10 +303,40 @@ export class RegistroService {
   });
  }
 
+ async teacherTimetable(ownerId:string):Promise<TeacherTimetable>{
+  await this.ensureOwner(ownerId);
+  const row=(await this.db.query("SELECT revision,entries FROM teacher_timetables WHERE owner_id=$1",[ownerId])).rows[0];
+  return row?{revision:Number(row.revision),entries:json<TeacherTimetableEntry[]>(row.entries,[])}:{revision:0,entries:[]};
+ }
+
+ async saveTeacherTimetable(ownerId:string,input:unknown):Promise<TeacherTimetable>{
+  const value=parse(timetableSchema,input) as TeacherTimetableInput;await this.ensureOwner(ownerId);
+  const toMinutes=(time:string)=>{const [hours,minutes]=time.split(":").map(Number);return hours*60+minutes;};
+  const ids=new Set<string>();
+  for(const entry of value.entries){
+   if(ids.has(entry.id))throw new AppError(400,"Cada franja del horario necesita un identificador único.");ids.add(entry.id);
+   if(toMinutes(entry.endTime)<=toMinutes(entry.startTime))throw new AppError(400,"La hora final debe ser posterior a la hora inicial.");
+  }
+  const sorted=[...value.entries].sort((a,b)=>a.weekday-b.weekday||toMinutes(a.startTime)-toMinutes(b.startTime));
+  let overlapDay=0;let latestEnd=0;
+  for(const current of sorted){const start=toMinutes(current.startTime),end=toMinutes(current.endTime);if(current.weekday!==overlapDay){overlapDay=current.weekday;latestEnd=end;continue;}if(start<latestEnd)throw new AppError(400,"Hay dos franjas que se superponen el mismo día.");latestEnd=Math.max(latestEnd,end);}
+  return this.db.transaction(async tx=>{
+   const courseIds=[...new Set(value.entries.map(item=>item.courseId))];
+   if(courseIds.length){const found=(await tx.query("SELECT id FROM courses WHERE owner_id=$1 AND id=ANY($2::uuid[])",[ownerId,courseIds])).rows.map(row=>str(row.id));if(found.length!==courseIds.length)throw new AppError(400,"El horario contiene un curso que no pertenece a esta cuenta.","CROSS_COURSE");}
+   const existing=(await tx.query("SELECT revision,entries FROM teacher_timetables WHERE owner_id=$1 FOR UPDATE",[ownerId])).rows[0];
+   const currentRevision=existing?Number(existing.revision):0;
+   if(currentRevision!==value.revision)throw new AppError(409,"El horario cambió desde que lo abriste. Recárgalo antes de guardar.","STALE_REVISION");
+   const revision=currentRevision+1;const before=existing?json<TeacherTimetableEntry[]>(existing.entries,[]):[];
+   await tx.query("INSERT INTO teacher_timetables(owner_id,revision,entries,updated_at) VALUES($1,$2,$3::jsonb,now()) ON CONFLICT(owner_id) DO UPDATE SET revision=EXCLUDED.revision,entries=EXCLUDED.entries,updated_at=now()",[ownerId,revision,JSON.stringify(value.entries)]);
+   await this.log(tx,ownerId,"teacher-timetable.saved","weekly",{revision:currentRevision,entries:before},{revision,entries:value.entries});
+   return {revision,entries:value.entries};
+  });
+ }
+
  async courseSequencePlans(ownerId:string,courseId:string):Promise<CourseSequencePlanView[]>{
   await this.ensureOwner(ownerId);await this.requireCourse(ownerId,courseId);
   const [planRows,sequence]=await Promise.all([
-   this.db.query(`SELECT p.id,p.course_id,p.sequence_activity_id,p.start_date::text AS start_date,p.end_date::text AS end_date,p.assessment_period,p.assessment_category,p.assessment_method,p.assessment_format,p.activity_id,p.revision,p.active,p.created_at::text AS created_at,a.title AS activity_title,a.scoring_mode,a.rubric,a.indicator_points,a.instrument FROM course_sequence_plans p LEFT JOIN activities a ON a.owner_id=p.owner_id AND a.course_id=p.course_id AND a.id=p.activity_id WHERE p.owner_id=$1 AND p.course_id=$2 AND p.active=true ORDER BY p.start_date,p.end_date,p.created_at,p.id`,[ownerId,courseId]),
+   this.db.query(`SELECT p.id,p.course_id,p.sequence_activity_id,p.start_date::text AS start_date,p.end_date::text AS end_date,p.assessment_period,p.assessment_category,p.assessment_method,p.assessment_format,p.activity_id,p.revision,p.active,p.created_at::text AS created_at,a.title AS activity_title,a.scoring_mode,a.rubric,a.indicator_points,a.instrument,a.revision AS activity_revision FROM course_sequence_plans p LEFT JOIN activities a ON a.owner_id=p.owner_id AND a.course_id=p.course_id AND a.id=p.activity_id WHERE p.owner_id=$1 AND p.course_id=$2 AND p.active=true ORDER BY p.start_date,p.end_date,p.created_at,p.id`,[ownerId,courseId]),
    this.curriculumSequence(ownerId),
   ]);
   if(!planRows.rows.length)return [];
@@ -317,7 +350,7 @@ export class RegistroService {
    const taughtSessions=past.filter(slot=>Number(slot.marked)>0&&str(slot.lesson_type)!=="actividad_escolar").length;
    const missedSessions=past.filter(slot=>Number(slot.marked)===0||str(slot.lesson_type)==="actividad_escolar").length;
    const activityExists=Boolean(row.activity_id&&row.activity_title);
-   const ready=row.scoring_mode==="rubric"?json<RubricCriterion[]>(row.rubric,[]).length>0&&json<ActivityIndicatorPoint[]>(row.indicator_points,[]).length>0:Boolean(str(row.instrument).trim());
+   const ready=row.scoring_mode==="rubric"?json<RubricCriterion[]>(row.rubric,[]).length>0&&json<ActivityIndicatorPoint[]>(row.indicator_points,[]).length>0:str(row.instrument).trim()==="Puntaje directo"||Number(row.activity_revision)>0;
    const future=slots.filter(slot=>str(slot.date)>to&&str(slot.date)>today);const recoverySlot=missedSessions?future[Math.min(missedSessions,future.length)-1]:undefined;
    return {id:str(row.id),courseId:str(row.course_id),sequenceActivityId:str(row.sequence_activity_id),startDate:from,endDate:to,assessmentPeriod:(str(row.assessment_period)||null) as CourseSequencePlanView["assessmentPeriod"],assessmentCategory:(str(row.assessment_category)||null) as CourseSequencePlanView["assessmentCategory"],assessmentMethod:str(row.assessment_method) as CourseSequencePlanView["assessmentMethod"],assessmentFormat:str(row.assessment_format),activityId:row.activity_id?str(row.activity_id):null,revision:Number(row.revision),active:Boolean(row.active),createdAt:row.created_at?str(row.created_at):null,sequenceCode:item?.code??"",sequenceTitle:item?.title??"Actividad de secuencia ya no disponible",activityTitle:activityExists?str(row.activity_title):null,activityReady:activityExists&&ready,scheduledSessions:covered.length,taughtSessions,missedSessions,schoolActivitySessions,nextSessionDate:recoverySlot?str(recoverySlot.date):null};
   });
@@ -563,14 +596,16 @@ export class RegistroService {
   const summaryRows = new Map(roster.map(student => [student.id, { student, present: 0, absent: 0, late: 0, excused: 0, withdrawn: 0, pending: 0, sessions: 0, behaviorSum: 0, behaviorMax: 0, behaviorCount: 0, behaviorComments: 0 }]));
   const sessionRows: CourseRegisterSummary["sessions"] = [];
   type MonthStudent = { student: Student; marks: AttendanceRow["status"][]; present: number; absent: number; late: number; excused: number; withdrawn: number; pending: number };
-  type MonthDraft = { key: string; label: string; startDate: string; endDate: string; taught: number; notTaught: number; slots: { date: string; block: number }[]; rows: Map<string, MonthStudent> };
+  type MonthDraft = { key: string; label: string; startDate: string; endDate: string; taught: number; notTaught: number; slots: { date: string; block: number|null }[]; rows: Map<string, MonthStudent> };
   const monthly = new Map<string, MonthDraft>();
   type WeekStudent = { student: Student; marks: AttendanceRow["status"][]; present: number; absent: number; late: number; excused: number; withdrawn: number; pending: number };
   type WeekDraft = { startDate: string; endDate: string; taught: number; notTaught: number; slots: { date: string; block: number }[]; rows: Map<string, WeekStudent> };
   const weekly = new Map<string, WeekDraft>();
+  const dailySessions = new Map<string,SessionDraft[]>();
   for (const s of sessions.values()) {
    const status = sessionStatus(s.date, s.marks, today, s.scheduled);
    const byStudent = new Map(s.rows.map(row => [row.studentId,row]));
+   const daySessions=dailySessions.get(s.date)??[];daySessions.push(s);dailySessions.set(s.date,daySessions);
    const counts = { P: 0, A: 0, T: 0, E: 0, marked: 0, behaviorRecorded: 0 };
    if (status === "impartida") {
     for (const [studentId, student] of summaryRows) {
@@ -596,29 +631,6 @@ export class RegistroService {
     }
    }
    sessionRows.push({ date: s.date, block: s.block, lessonType: s.lessonType, topic: s.topic, status, scheduled: s.scheduled, present: counts.P, absent: counts.A, late: counts.T, excused: counts.E, marked: counts.marked, behaviorRecorded: counts.behaviorRecorded });
-   const monthKey = s.date.slice(0, 7);
-   let month = monthly.get(monthKey);
-   if (!month) {
-    const year = Number(monthKey.slice(0,4)), monthNumber = Number(monthKey.slice(5,7));
-    const monthLastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-    month = { key: monthKey, label: `${monthNames[monthNumber-1]} ${year}`, startDate: `${monthKey}-01`, endDate: `${monthKey}-${String(monthLastDay).padStart(2,"0")}`, taught: 0, notTaught: 0, slots: [], rows: new Map(roster.map(student => [student.id, { student, marks: [], present: 0, absent: 0, late: 0, excused: 0, withdrawn: 0, pending: 0 }])) };
-    monthly.set(monthKey, month);
-   }
-   if (status === "impartida") {
-    month.taught++;
-    month.slots.push({ date: s.date, block: s.block });
-    for (const monthlyRow of month.rows.values()) {
-     const retirementDate = withdrawnFrom.get(monthlyRow.student.id);
-     const mark = retirementDate && s.date >= retirementDate ? "R" : byStudent.get(monthlyRow.student.id)?.status ?? null;
-     monthlyRow.marks.push(mark);
-     if (mark === "P") monthlyRow.present++;
-     else if (mark === "A") monthlyRow.absent++;
-     else if (mark === "T") monthlyRow.late++;
-     else if (mark === "E") monthlyRow.excused++;
-     else if (mark === "R") monthlyRow.withdrawn++;
-     else monthlyRow.pending++;
-    }
-   } else if (status === "no_impartida") month.notTaught++;
    const monday = new Date(`${s.date}T00:00:00Z`);
    monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
    const startDate = monday.toISOString().slice(0, 10);
@@ -643,6 +655,31 @@ export class RegistroService {
      else weeklyRow.pending++;
     }
    } else if (status === "no_impartida") week.notTaught++;
+  }
+  const combineDailyMarks=(marks:AttendanceRow["status"][]):AttendanceRow["status"]=>{
+   if(!marks.length||marks.some(mark=>mark===null))return null;
+   if(marks.every(mark=>mark==='R'))return 'R';
+   const active=marks.filter((mark):mark is Exclude<AttendanceRow["status"],null>=>mark!=='R');
+   if(active.some(mark=>mark==='A')&&active.some(mark=>mark==='P'||mark==='T'))return 'T';
+   if(active.some(mark=>mark==='T'))return 'T';
+   if(active.some(mark=>mark==='P'))return 'P';
+   if(active.every(mark=>mark==='E'))return 'E';
+   if(active.some(mark=>mark==='A'))return 'A';
+   return null;
+  };
+  for(const [date,daySessions] of [...dailySessions.entries()].sort(([a],[b])=>a.localeCompare(b))){
+   const worked=daySessions.filter(item=>sessionStatus(item.date,item.marks,today,item.scheduled)==='impartida');
+   const monthKey=date.slice(0,7);let month=monthly.get(monthKey);
+   if(!month){const year=Number(monthKey.slice(0,4)),monthNumber=Number(monthKey.slice(5,7));const monthLastDay=new Date(Date.UTC(year,monthNumber,0)).getUTCDate();month={key:monthKey,label:`${monthNames[monthNumber-1]} ${year}`,startDate:`${monthKey}-01`,endDate:`${monthKey}-${String(monthLastDay).padStart(2,'0')}`,taught:0,notTaught:0,slots:[],rows:new Map(roster.map(person=>[person.id,{student:person,marks:[],present:0,absent:0,late:0,excused:0,withdrawn:0,pending:0}]))};monthly.set(monthKey,month);}
+   if(worked.length){
+    month.taught++;month.slots.push({date,block:null});
+    for(const monthlyRow of month.rows.values()){
+     const retirementDate=withdrawnFrom.get(monthlyRow.student.id);
+     const mark=retirementDate&&date>=retirementDate?'R':combineDailyMarks(worked.map(slot=>slot.rows.find(row=>row.studentId===monthlyRow.student.id)?.status??null));
+     monthlyRow.marks.push(mark);
+     if(mark==='P')monthlyRow.present++;else if(mark==='A')monthlyRow.absent++;else if(mark==='T')monthlyRow.late++;else if(mark==='E')monthlyRow.excused++;else if(mark==='R')monthlyRow.withdrawn++;else monthlyRow.pending++;
+    }
+   }else if(daySessions.some(item=>sessionStatus(item.date,item.marks,today,item.scheduled)==='no_impartida'))month.notTaught++;
   }
   sessionRows.sort((a,b)=>a.date.localeCompare(b.date)||a.block-b.block);
   const rows: CourseRegisterSummary["rows"] = [...summaryRows.values()].filter(r=>r.student.active||r.sessions>0).map(r=>{
@@ -748,7 +785,7 @@ export class RegistroService {
     if(coursePlan.activity_id)throw new AppError(409,"Este plan ya tiene una evaluación vinculada. Ábrela desde Cursos para continuar.","COURSE_PLAN_ALREADY_LINKED");
    }
    const id = randomUUID();
-   await tx.query("INSERT INTO activities(id,owner_id,course_id,shared_id,period,category,title,activity_date,block,max_points,scoring_mode,rubric,description,sequence_code,sequence_activity_id,sequence_planned_period,evidence,instrument,activity_purpose,competency,indicator) VALUES($1,$2,$3,NULL,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20)", [id, ownerId, v.courseId, targetPeriod, v.category, v.title, v.date, v.block ?? 1, v.maxPoints, mode, JSON.stringify(preparedCriteria), v.description ?? "", linkedSequenceActivity?.code ?? v.sequenceCode ?? "", linkedSequenceActivity?.id ?? null, plannedPeriodForEvaluation(sequence,linkedSequenceActivity,targetPeriod), v.evidence ?? "", v.instrument ?? "", v.purpose ?? "", activityCompetency ?? "", v.indicator ?? ""]);
+   await tx.query("INSERT INTO activities(id,owner_id,course_id,shared_id,period,category,title,activity_date,block,max_points,scoring_mode,rubric,description,sequence_code,sequence_activity_id,sequence_planned_period,evidence,instrument,activity_purpose,competency,indicator,active_for_grading) VALUES($1,$2,$3,NULL,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)", [id, ownerId, v.courseId, targetPeriod, v.category, v.title, v.date, v.block ?? 1, v.maxPoints, mode, JSON.stringify(preparedCriteria), v.description ?? "", linkedSequenceActivity?.code ?? v.sequenceCode ?? "", linkedSequenceActivity?.id ?? null, plannedPeriodForEvaluation(sequence,linkedSequenceActivity,targetPeriod), v.evidence ?? "", v.instrument ?? "", v.purpose ?? "", activityCompetency ?? "", v.indicator ?? "", v.activeForGrading]);
    if(coursePlan){const revision=Number(coursePlan.revision)+1;await tx.query("UPDATE course_sequence_plans SET activity_id=$4,assessment_category=$5,assessment_method=$6,revision=$7,updated_at=now() WHERE owner_id=$1 AND course_id=$2 AND id=$3",[ownerId,v.courseId,str(coursePlan.id),id,v.category,mode,revision]);await this.log(tx,ownerId,"course.sequence-plan.evaluation-linked",str(coursePlan.id),coursePlan,{activityId:id,period:targetPeriod,assessmentCategory:v.category,assessmentMethod:mode,revision});}
    await this.persistActivityCriteria(ownerId,id,preparedCriteria,tx);
    const result = await this.activityWithCriteria(ownerId,(await tx.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND id=$2`, [ownerId, id])).rows[0],tx);
@@ -788,7 +825,7 @@ export class RegistroService {
    for (const courseId of v.courseIds) {
     if (first.category === "notebook" && (await tx.query("SELECT id FROM activities WHERE owner_id=$1 AND course_id=$2 AND category='notebook' AND activity_date=$3 AND block=$4", [ownerId, courseId, first.date, first.block ?? 1])).rows.length) throw new AppError(409, `Ya existe una revisión diaria de libreta para ${courseId} en esta fecha y bloque.`);
     const id = randomUUID();
-    await tx.query("INSERT INTO activities(id,owner_id,course_id,shared_id,period,category,title,activity_date,block,max_points,scoring_mode,rubric,description,sequence_code,sequence_activity_id,sequence_planned_period,evidence,instrument,activity_purpose,competency,indicator) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18,$19,$20,$21)", [id, ownerId, courseId, sharedId, current.period, first.category, first.title, first.date, first.block ?? 1, first.maxPoints, mode, JSON.stringify(preparedCriteria), first.description ?? "", linkedSequenceActivity?.code ?? first.sequenceCode ?? "", linkedSequenceActivity?.id ?? null, plannedPeriodForEvaluation(sequence,linkedSequenceActivity,current.period), first.evidence ?? "", first.instrument ?? "", first.purpose ?? "", activityCompetency ?? "", first.indicator ?? ""]);
+    await tx.query("INSERT INTO activities(id,owner_id,course_id,shared_id,period,category,title,activity_date,block,max_points,scoring_mode,rubric,description,sequence_code,sequence_activity_id,sequence_planned_period,evidence,instrument,activity_purpose,competency,indicator,active_for_grading) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)", [id, ownerId, courseId, sharedId, current.period, first.category, first.title, first.date, first.block ?? 1, first.maxPoints, mode, JSON.stringify(preparedCriteria), first.description ?? "", linkedSequenceActivity?.code ?? first.sequenceCode ?? "", linkedSequenceActivity?.id ?? null, plannedPeriodForEvaluation(sequence,linkedSequenceActivity,current.period), first.evidence ?? "", first.instrument ?? "", first.purpose ?? "", activityCompetency ?? "", first.indicator ?? "", first.activeForGrading]);
     await this.persistActivityCriteria(ownerId,id,preparedCriteria,tx);
     const created = await this.activityWithCriteria(ownerId,(await tx.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND id=$2`, [ownerId, id])).rows[0],tx);
     await this.log(tx, ownerId, "activity.created.shared", id, null, created);
@@ -805,7 +842,13 @@ export class RegistroService {
    const result=await tx.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND id=$2 FOR UPDATE`,[ownerId,value.activityId]);
    if(!result.rows.length)throw new AppError(404,"La actividad no pertenece a este registro.","NOT_FOUND");
    const current=await this.activityWithCriteria(ownerId,result.rows[0],tx);if(current.revision!==value.revision)throw new AppError(409,"La actividad cambió desde que abriste esta configuración. Recarga y vuelve a revisarla.","STALE_REVISION");
-   const existingGrades=await tx.query("SELECT 1 FROM grades WHERE owner_id=$1 AND activity_id IN (SELECT id FROM activities WHERE owner_id=$1 AND (id=$2 OR shared_id=$3)) LIMIT 1",[ownerId,current.id,current.sharedId]);
+   const linkedRows=current.sharedId?(await tx.query("SELECT id FROM activities WHERE owner_id=$1 AND shared_id=$2 FOR UPDATE",[ownerId,current.sharedId])).rows:[{id:current.id}];
+   const linkedIds=linkedRows.map(row=>str(row.id));
+   const requestedIds=[...new Set(value.applyToActivityIds)];
+   if(requestedIds.includes(current.id))throw new AppError(400,"El curso actual ya está incluido; no lo repitas en la lista de cursos vinculados.");
+   if(requestedIds.some(id=>!linkedIds.includes(id)))throw new AppError(400,"Solo puedes copiar la valoración a las copias de esta actividad que pertenecen a tu registro.");
+   const ids=[current.id,...requestedIds];
+   const existingGrades=await tx.query("SELECT 1 FROM grades WHERE owner_id=$1 AND activity_id = ANY($2::uuid[]) LIMIT 1",[ownerId,ids]);
    if(existingGrades.rows.length)throw new AppError(409,"Ya se calificó esta actividad. Para cambiar su valoración, primero crea una revisión nueva; las notas guardadas no se recalcularán silenciosamente.","ALREADY_GRADED");
     const planForActivity=await this.planForPeriod(ownerId,current.period,tx);const globalSequence=await this.curriculumSequence(ownerId,tx);const sourceSequence=globalSequence??planForActivity.sequence;const useSequence=Boolean(sourceSequence?.reviewed);const plannedIndicators=useSequence?sourceSequence!.indicators:[];
     const linkedSequenceActivity=useSequence?findLinkedSequenceActivity(sourceSequence,current.sequenceActivityId,current.sequenceCode,current.sequencePlannedPeriod??current.period):null;
@@ -853,14 +896,13 @@ export class RegistroService {
     for(const allocation of allocations)if(!rubric.some(item=>item.indicatorId===allocation.indicatorId))throw new AppError(400,`Añade un criterio que permita valorar el indicador “${allocation.label}”.`);
    } else if(value.rubric.length)throw new AppError(400,"La calificación directa no puede guardar criterios de rúbrica.");
    const instrument=value.instrument.trim()||(value.scoringMode==="rubric"?"Rúbrica analítica":"Puntaje directo");
-   const ids=current.sharedId
-    ?(await tx.query("SELECT id FROM activities WHERE owner_id=$1 AND shared_id=$2 FOR UPDATE",[ownerId,current.sharedId])).rows.map(row=>str(row.id))
-    :[current.id];
+   const affectedRows=current.sharedId?(await tx.query("SELECT id,revision FROM activities WHERE owner_id=$1 AND id = ANY($2::uuid[]) FOR UPDATE",[ownerId,ids])).rows:[{id:current.id,revision:current.revision}];
    const revision=current.revision+1;
    for(const id of ids){
-    await tx.query("UPDATE activities SET scoring_mode=$3,rubric=$4::jsonb,indicator_points=$5::jsonb,instrument=$6,revision=$7,updated_at=now() WHERE owner_id=$1 AND id=$2",[ownerId,id,value.scoringMode,JSON.stringify(rubric),JSON.stringify(allocations),instrument,revision]);
+    const itemRevision=Number(affectedRows.find(row=>str(row.id)===id)?.revision??current.revision)+1;
+    await tx.query("UPDATE activities SET scoring_mode=$3,rubric=$4::jsonb,indicator_points=$5::jsonb,instrument=$6,revision=$7,updated_at=now() WHERE owner_id=$1 AND id=$2",[ownerId,id,value.scoringMode,JSON.stringify(rubric),JSON.stringify(allocations),instrument,itemRevision]);
     await this.persistActivityCriteria(ownerId,id,rubric,tx);
-    await this.log(tx,ownerId,"activity.evaluation.configured",id,{scoringMode:current.scoringMode,rubric:current.rubric,indicatorPoints:current.indicatorPoints},{scoringMode:value.scoringMode,rubric,indicatorPoints:allocations,instrument,revision});
+    await this.log(tx,ownerId,"activity.evaluation.configured",id,{scoringMode:current.scoringMode,rubric:current.rubric,indicatorPoints:current.indicatorPoints},{scoringMode:value.scoringMode,rubric,indicatorPoints:allocations,instrument,revision:itemRevision});
    }
    return {requestId:value.requestId,operationId,savedRows:ids.length,revision,entityId:current.sharedId??current.id,replayed:false,savedAt:new Date().toISOString()};
   });
@@ -868,6 +910,28 @@ export class RegistroService {
    ?await this.db.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND id=$2 ORDER BY course_id`,[ownerId,value.activityId])
    :await this.db.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND shared_id=$2 ORDER BY course_id`,[ownerId,receipt.entityId]);
   return Promise.all(query.rows.map(row=>this.activityWithCriteria(ownerId,row)));
+ }
+
+ async setActivityGradingState(ownerId:string,input:unknown):Promise<Activity>{
+  const value=parse(activityGradingStateSchema,input);await this.ensureOwner(ownerId);
+  const receipt=await this.operation(ownerId,value.requestId,{operation:"activity.grading-state",...value},async(tx,operationId)=>{
+   const row=(await tx.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND id=$2 FOR UPDATE`,[ownerId,value.activityId])).rows[0];
+   if(!row)throw new AppError(404,"La actividad no pertenece a este registro.","NOT_FOUND");
+   const current=await this.activityWithCriteria(ownerId,row,tx);
+   if(current.revision!==value.revision)throw new AppError(409,"La actividad cambió desde que abriste Configurar cursos. Recarga y vuelve a intentarlo.","STALE_REVISION");
+   if(value.active&&!isActivityEvaluationReady(current))throw new AppError(409,"Configura primero la forma de evaluación de esta actividad.","EVALUATION_NOT_CONFIGURED");
+   if(!value.active&&current.activeForGrading){
+    const graded=await tx.query("SELECT 1 FROM grades WHERE owner_id=$1 AND activity_id=$2 AND (score IS NOT NULL OR comment<>'' OR (jsonb_typeof(criterion_levels)='object' AND criterion_levels<>'{}'::jsonb)) LIMIT 1",[ownerId,current.id]);
+    if(graded.rows.length)throw new AppError(409,"Esta actividad ya tiene notas. Conserva su inclusión para no ocultarlas de la captura del curso.","ACTIVITY_HAS_GRADES");
+   }
+   if(current.activeForGrading===value.active)return {requestId:value.requestId,operationId,savedRows:0,revision:current.revision,entityId:current.id,replayed:false,savedAt:new Date().toISOString()};
+   const revision=current.revision+1;
+   await tx.query("UPDATE activities SET active_for_grading=$3,revision=$4,updated_at=now() WHERE owner_id=$1 AND id=$2",[ownerId,current.id,value.active,revision]);
+   const updated=await this.activityWithCriteria(ownerId,(await tx.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND id=$2`,[ownerId,current.id])).rows[0],tx);
+   await this.log(tx,ownerId,"activity.grading-state.changed",current.id,current,updated);
+   return {requestId:value.requestId,operationId,savedRows:1,revision,entityId:current.id,replayed:false,savedAt:new Date().toISOString()};
+  });
+  return (await this.gradesView(ownerId,receipt.entityId,this.db)).activity;
  }
 
  async savePlanSequence(ownerId:string,period:string,sequence:NonNullable<EvaluationPlan["sequence"]>):Promise<EvaluationPlan>{
@@ -929,12 +993,15 @@ export class RegistroService {
   });
  }
 
- async teacherLedger(ownerId: string, requestedPeriod?: string): Promise<TeacherLedgerSummary> {
+ async teacherLedger(ownerId: string, requestedPeriod?: string, requestedCourseId?: string): Promise<TeacherLedgerSummary> {
   await this.ensureOwner(ownerId);
+  if(requestedCourseId)await this.requireCourse(ownerId,requestedCourseId);
   const selectedPeriod=requestedPeriod??(await this.currentPlan(ownerId)).period;
   const directPlan=await readPeriodSheet(this.db,ownerId,selectedPeriod);
   const availablePeriods = (await this.db.query("SELECT period FROM evaluation_plans WHERE owner_id=$1 UNION SELECT period FROM period_score_plans WHERE owner_id=$1 ORDER BY period", [ownerId])).rows.map(row=>str(row.period));
-  const courseRows = (await this.db.query("SELECT id,code,name FROM courses WHERE owner_id=$1 ORDER BY code", [ownerId])).rows;
+  const courseRows = requestedCourseId
+   ? (await this.db.query("SELECT id,code,name FROM courses WHERE owner_id=$1 AND id=$2 ORDER BY code", [ownerId,requestedCourseId])).rows
+   : (await this.db.query("SELECT id,code,name FROM courses WHERE owner_id=$1 ORDER BY code", [ownerId])).rows;
   if(directPlan.enabled&&!directPlan.columns.some(column=>Boolean(column.category))){
    const rows:TeacherLedgerSummary['rows']=[];
    for(const course of courseRows){
@@ -944,7 +1011,9 @@ export class RegistroService {
    return {period:selectedPeriod,availablePeriods,categories:[],groups:[],rows,directPlan,note:'El cuadro del período es la fuente de la nota. Sus columnas suman directamente hasta 100; las actividades anteriores se conservan sin añadirse otra vez.'};
   }
   const p = requestedPeriod ? await this.planForPeriod(ownerId, requestedPeriod) : await this.currentPlan(ownerId);
-  const activityRowsRaw=(await this.db.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND period=$2 ORDER BY activity_date,title,id`,[ownerId,p.period])).rows;
+  const activityRowsRaw=requestedCourseId
+   ? (await this.db.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND period=$2 AND course_id=$3 AND active_for_grading=true ORDER BY activity_date,title,id`,[ownerId,p.period,requestedCourseId])).rows
+   : (await this.db.query(`SELECT ${activityFields} FROM activities WHERE owner_id=$1 AND period=$2 AND active_for_grading=true ORDER BY activity_date,title,id`,[ownerId,p.period])).rows;
   const activityRows=await Promise.all(activityRowsRaw.map(row=>this.activityWithCriteria(ownerId,row)));
   const categoryLabels = new Map<string,string>([...p.categories.map(category => [category.key,category.label] as const),["extra","Puntos extra"]]);
   const columns = new Map<string,TeacherLedgerSummary["groups"][number]["columns"][number]>();
@@ -1089,7 +1158,7 @@ export class RegistroService {
   const rows: GradeRow[] = roster.filter(x => x.active || byId.has(x.id)).map(x => { const r = byId.get(x.id); const normalized=levelsByStudent.get(x.id); return { studentId: x.id, number: x.number, name: x.name, score: num(r?.score), criterionLevels: normalized&&Object.keys(normalized).length?normalized:json(r?.criterion_levels, null), comment: str(r?.comment) }; });
   return { activity: a, rows };
  }
- async grades(ownerId: string, activityId: string): Promise<GradesView> { await this.ensureOwner(ownerId); return this.gradesView(ownerId, activityId, this.db); }
+ async grades(ownerId: string, activityId: string): Promise<GradesView> { await this.ensureOwner(ownerId); const result=await this.gradesView(ownerId, activityId, this.db); if(!result.activity.activeForGrading)throw new AppError(409,"Esta actividad aún no está incluida en las calificaciones de este curso. Actívala en Configurar cursos.","ACTIVITY_NOT_ACTIVE_FOR_GRADING"); return result; }
  async indicatorUsage(ownerId:string):Promise<IndicatorUsageRecord[]>{
   await this.ensureOwner(ownerId);
   const activities=(await this.db.query(`SELECT a.id,a.shared_id,a.course_id,c.code AS course_code,a.period,a.title,a.max_points,a.indicator_points FROM activities a JOIN courses c ON c.id=a.course_id AND c.owner_id=a.owner_id WHERE a.owner_id=$1 ORDER BY a.period,a.activity_date,a.title,a.course_id`,[ownerId])).rows;
@@ -1110,7 +1179,7 @@ export class RegistroService {
   return this.operation(ownerId, v.requestId, { operation: "grades", ...v }, async (tx, operationId) => {
    const locked = await tx.query("SELECT id,revision FROM activities WHERE owner_id=$1 AND id=$2 FOR UPDATE", [ownerId, v.activityId]); if (!locked.rows.length) throw new AppError(404, "La actividad no pertenece a este registro.", "NOT_FOUND");
    if (Number(locked.rows[0].revision) !== v.revision) throw new AppError(409, "Las notas cambiaron desde otra pestaña. Recarga conservando tu borrador.", "REVISION_CONFLICT");
-   const before = await this.gradesView(ownerId, v.activityId, tx), a = before.activity; this.validateStudents(v.rows, await this.roster(ownerId, a.courseId, tx));
+    const before = await this.gradesView(ownerId, v.activityId, tx), a = before.activity; if(!a.activeForGrading)throw new AppError(409,"Esta actividad aún no está incluida en las calificaciones de este curso. Actívala en Configurar cursos.","ACTIVITY_NOT_ACTIVE_FOR_GRADING"); this.validateStudents(v.rows, await this.roster(ownerId, a.courseId, tx));
    const periodPlan=await this.planForPeriod(ownerId,a.period,tx);
     const reviewedSequence=await this.curriculumSequence(ownerId,tx)??periodPlan.sequence;
    if(a.scoringMode==="rubric"&&!a.rubric.length)throw new AppError(409,"La rúbrica todavía no está configurada. Define sus criterios antes de capturar calificaciones.","EVALUATION_NOT_CONFIGURED");
@@ -1255,7 +1324,7 @@ export class RegistroService {
  }
 
  async audit(ownerId: string): Promise<AuditEntry[]> { await this.ensureOwner(ownerId); return (await this.db.query("SELECT id,operation,entity_id,created_at::text AS created_at,before_data,after_data FROM audit_entries WHERE owner_id=$1 ORDER BY created_at DESC,id DESC LIMIT 200", [ownerId])).rows.map(r => ({ id: str(r.id), operation: str(r.operation), entityId: str(r.entity_id), createdAt: str(r.created_at), before: json(r.before_data, null), after: json(r.after_data, null) })); }
- async exportData(ownerId: string) { await this.ensureOwner(ownerId); return this.db.transaction(async tx => { const read = async (table: string, fields: string) => (await tx.query(`SELECT ${fields} FROM ${table} WHERE owner_id=$1`, [ownerId])).rows; return { format: "registro-docente/v1", exportedAt: new Date().toISOString(), ownerId, plans: await read("evaluation_plans", "period,config,active,revision"), courses: await read("courses", "id,code,name"), students: await read("students", "id,course_id,external_id,number,name,active"), scheduledSessions: await read("scheduled_sessions", "course_id,session_date::text AS date,block"), sessions: await read("class_sessions", "id,course_id,session_date::text AS date,block,lesson_type,topic,notes,revision"), attendance: await read("attendance", "course_id,session_id,student_id,status,behavior,behavior_max,comment"), activities: await read("activities", activityFields), courseSequencePlans: await read("course_sequence_plans", "id,course_id,sequence_activity_id,start_date::text AS start_date,end_date::text AS end_date,assessment_period,assessment_category,assessment_method,assessment_format,activity_id,revision,active,created_at::text"), criteria: await read("evaluation_criteria", "id,label,levels,active,updated_at::text"), criterionValues: await read("evaluation_criterion_values", "criterion_id,level_position,level_label,points,descriptor"), activityCriteria: await read("activity_criteria", "activity_id,criterion_key,catalog_criterion_id,criterion_label,indicator_id,competency,weight,position,levels_snapshot"), grades: await read("grades", "course_id,activity_id,student_id,score,criterion_levels,comment"), criterionRatings: await read("grade_criterion_ratings", "activity_id,student_id,criterion_key,level_position,level_label,points,descriptor"), periodScorePlans: await read("period_score_plans", "period,revision,enabled,columns"), periodScores: await read("period_scores", "period,course_id,student_id,column_id,score"), attendanceImportBatches: await read("attendance_import_batches", "id,file_name,summary,restoration,status,created_at::text,reverted_at::text"), audit: await read("audit_entries", "id,operation,entity_id,created_at::text,before_data,after_data") }; }); }
+ async exportData(ownerId: string) { await this.ensureOwner(ownerId); return this.db.transaction(async tx => { const read = async (table: string, fields: string) => (await tx.query(`SELECT ${fields} FROM ${table} WHERE owner_id=$1`, [ownerId])).rows; return { format: "registro-docente/v1", exportedAt: new Date().toISOString(), ownerId, plans: await read("evaluation_plans", "period,config,active,revision"), courses: await read("courses", "id,code,name"), teacherTimetable: await read("teacher_timetables", "revision,entries,updated_at::text"), students: await read("students", "id,course_id,external_id,number,name,active"), scheduledSessions: await read("scheduled_sessions", "course_id,session_date::text AS date,block"), sessions: await read("class_sessions", "id,course_id,session_date::text AS date,block,lesson_type,topic,notes,revision"), attendance: await read("attendance", "course_id,session_id,student_id,status,behavior,behavior_max,comment"), activities: await read("activities", activityFields), courseSequencePlans: await read("course_sequence_plans", "id,course_id,sequence_activity_id,start_date::text AS start_date,end_date::text AS end_date,assessment_period,assessment_category,assessment_method,assessment_format,activity_id,revision,active,created_at::text"), criteria: await read("evaluation_criteria", "id,label,levels,active,updated_at::text"), criterionValues: await read("evaluation_criterion_values", "criterion_id,level_position,level_label,points,descriptor"), activityCriteria: await read("activity_criteria", "activity_id,criterion_key,catalog_criterion_id,criterion_label,indicator_id,competency,weight,position,levels_snapshot"), grades: await read("grades", "course_id,activity_id,student_id,score,criterion_levels,comment"), criterionRatings: await read("grade_criterion_ratings", "activity_id,student_id,criterion_key,level_position,level_label,points,descriptor"), periodScorePlans: await read("period_score_plans", "period,revision,enabled,columns"), periodScores: await read("period_scores", "period,course_id,student_id,column_id,score"), attendanceImportBatches: await read("attendance_import_batches", "id,file_name,summary,restoration,status,created_at::text,reverted_at::text"), audit: await read("audit_entries", "id,operation,entity_id,created_at::text,before_data,after_data") }; }); }
 
  async report(ownerId: string, courseId: string, studentId: string, requestedPeriod?: string): Promise<StudentReport> {
   await this.ensureOwner(ownerId); const c = await this.requireCourse(ownerId, courseId); const person = (await this.roster(ownerId, courseId)).find(s => s.id === studentId); if (!person) throw new AppError(404, "El estudiante no pertenece a este curso.", "NOT_FOUND"); const p = requestedPeriod ? await this.planForPeriod(ownerId, requestedPeriod) : await this.currentPlan(ownerId);
@@ -1268,7 +1337,7 @@ export class RegistroService {
   for (const s of taught) { if (s.status === "R") continue; stats.sessions++; if (s.status === "P") stats.present++; else if (s.status === "A") stats.absent++; else if (s.status === "T") stats.late++; else if (s.status === "E") stats.excused++; else stats.pending++; }
   const creditedAttendance = stats.present + stats.late - Math.floor(stats.late / 3);
   stats.percent = stats.sessions && stats.pending === 0 ? round(creditedAttendance / stats.sessions * 100) : null;
-  const gradeRecords = (await this.db.query(`SELECT a.id AS activity_id,a.title,a.activity_date::text AS date,a.block,a.category,a.max_points,a.scoring_mode,a.rubric,a.indicator_points,a.competency,a.indicator,a.sequence_code,a.sequence_activity_id,a.sequence_planned_period,a.evidence,a.instrument,a.activity_purpose,g.score,g.criterion_levels,g.comment FROM activities a LEFT JOIN grades g ON g.activity_id=a.id AND g.student_id=$3 AND g.owner_id=a.owner_id WHERE a.owner_id=$1 AND a.course_id=$2 AND a.period=$4 ORDER BY a.activity_date,a.title`, [ownerId, courseId, studentId, p.period])).rows;
+  const gradeRecords = (await this.db.query(`SELECT a.id AS activity_id,a.title,a.activity_date::text AS date,a.block,a.category,a.max_points,a.scoring_mode,a.rubric,a.indicator_points,a.competency,a.indicator,a.sequence_code,a.sequence_activity_id,a.sequence_planned_period,a.evidence,a.instrument,a.activity_purpose,g.score,g.criterion_levels,g.comment FROM activities a LEFT JOIN grades g ON g.activity_id=a.id AND g.student_id=$3 AND g.owner_id=a.owner_id WHERE a.owner_id=$1 AND a.course_id=$2 AND a.period=$4 AND a.active_for_grading=true ORDER BY a.activity_date,a.title`, [ownerId, courseId, studentId, p.period])).rows;
   const sessionKeys = new Set(taught.map(s => `${str(s.date)}:${Number(s.block)}`));
   const directEvaluation=await studentPeriodSheet(this.db,ownerId,p.period,studentId,periodSheetWeights(p.categories));
   const isDimensionCapture=(column:{captureKey?:string})=>column.captureKey==='participation'||column.captureKey==='discipline';

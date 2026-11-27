@@ -7,6 +7,12 @@ CREATE TABLE IF NOT EXISTS courses (
  code text NOT NULL, name text NOT NULL,
  UNIQUE(owner_id,code), UNIQUE(id,owner_id)
 );
+CREATE TABLE IF NOT EXISTS teacher_timetables (
+ owner_id text PRIMARY KEY REFERENCES workspaces(owner_id),
+ revision integer NOT NULL DEFAULT 0 CHECK(revision>=0),
+ entries jsonb NOT NULL DEFAULT '[]'::jsonb,
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS evaluation_plans (
  owner_id text NOT NULL REFERENCES workspaces(owner_id), period text NOT NULL,
  config jsonb NOT NULL, active boolean NOT NULL DEFAULT false,
@@ -91,7 +97,7 @@ CREATE TABLE IF NOT EXISTS activities (
  rubric jsonb NOT NULL DEFAULT '[]'::jsonb, indicator_points jsonb NOT NULL DEFAULT '[]'::jsonb, description text NOT NULL DEFAULT '',
  sequence_code text NOT NULL DEFAULT '', sequence_activity_id text, sequence_planned_period text NOT NULL DEFAULT '', evidence text NOT NULL DEFAULT '',
  instrument text NOT NULL DEFAULT '', activity_purpose text NOT NULL DEFAULT '',
- competency text NOT NULL DEFAULT '', indicator text NOT NULL DEFAULT '',
+  competency text NOT NULL DEFAULT '', indicator text NOT NULL DEFAULT '', active_for_grading boolean NOT NULL DEFAULT true,
  revision integer NOT NULL DEFAULT 0 CHECK(revision>=0), created_at timestamptz DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(id,course_id,owner_id),
  FOREIGN KEY(course_id,owner_id) REFERENCES courses(id,owner_id),
@@ -109,6 +115,7 @@ ALTER TABLE activities ADD COLUMN IF NOT EXISTS activity_purpose text NOT NULL D
 ALTER TABLE activities ADD COLUMN IF NOT EXISTS competency text NOT NULL DEFAULT '';
 ALTER TABLE activities ADD COLUMN IF NOT EXISTS indicator text NOT NULL DEFAULT '';
 ALTER TABLE activities ADD COLUMN IF NOT EXISTS indicator_points jsonb NOT NULL DEFAULT '[]'::jsonb;
+ ALTER TABLE activities ADD COLUMN IF NOT EXISTS active_for_grading boolean NOT NULL DEFAULT true;
 ALTER TABLE activities ADD COLUMN IF NOT EXISTS created_at timestamptz;
 ALTER TABLE activities ALTER COLUMN created_at SET DEFAULT now();
 CREATE TABLE IF NOT EXISTS evaluation_criteria (

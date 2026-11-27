@@ -29,6 +29,7 @@ export async function GET(req:NextRequest) {
       case 'register-summary': data=await service.registerSummary(owner,q.get('courseId')||''); break;
       case 'attendance-imports': data=await service.attendanceImports(owner); break;
       case 'course-sequence-plans': data=await service.courseSequencePlans(owner,q.get('courseId')||'');break;
+      case 'teacher-timetable': data=await service.teacherTimetable(owner);break;
       case 'attendance-register-pdf': {
         const courseId=q.get('courseId')||'';
         if(!courseId) throw new AppError(400,'Selecciona un curso para descargar su registro.');
@@ -44,7 +45,7 @@ export async function GET(req:NextRequest) {
       case 'indicator-usage': data=await service.indicatorUsage(owner); break;
       case 'report': data=await service.report(owner,q.get('courseId')||'',q.get('studentId')||''); break;
       case 'competency-summary': data=await service.competencySummary(owner,q.get('courseId')||''); break;
-      case 'teacher-ledger': data=await service.teacherLedger(owner,q.get('period')||undefined); break;
+      case 'teacher-ledger': data=await service.teacherLedger(owner,q.get('period')||undefined,q.get('courseId')||undefined); break;
       case 'period-sheet': data=await service.periodSheet(owner,q.get('period')||'P2',q.get('courseId')||'');break;
       case 'audit': data=await service.audit(owner); break;
       case 'export': return new NextResponse(JSON.stringify(await service.exportData(owner),null,2),{headers:{...headers,'Content-Type':'application/json; charset=utf-8','Content-Disposition':'attachment; filename="registro-docente-respaldo.json"'}});
@@ -73,10 +74,12 @@ export async function POST(req:NextRequest) {
       case 'activity': data=await service.createActivity(owner,body.input as ActivityInput);break;
       case 'shared-activity': data=await service.createSharedActivity(owner,body.input as SharedActivityInput);break;
       case 'configure-activity': data=await service.configureActivityEvaluation(owner,body.input);break;
+      case 'activity-grading-state': data=await service.setActivityGradingState(owner,body.input);break;
       case 'criterion': data=await service.saveEvaluationCriterion(owner,body.input);break;
       case 'criteria-import': data=await service.importEvaluationCriteria(owner,body.input);break;
       case 'archive-criterion': {const input=body.input as {id?:unknown}|null;data=await service.archiveEvaluationCriterion(owner,typeof input?.id==='string'?input.id:'');break;}
       case 'course': data=await service.createCourse(owner,body.input);break;
+      case 'teacher-timetable': data=await service.saveTeacherTimetable(owner,body.input);break;
       case 'course-sequence-plan': data=await service.saveCourseSequencePlan(owner,body.input);break;
       case 'archive-course-sequence-plan': await service.archiveCourseSequencePlan(owner,body.input);data={archived:true};break;
       case 'manage-roster': data=await service.manageRoster(owner,body.input);break;

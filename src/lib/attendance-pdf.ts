@@ -83,7 +83,7 @@ function drawPanel(
     const slot = days[i];
     if (slot) {
       const day = slot.date.slice(8, 10);
-      drawCentered(page, `${day}${slot.block > 1 ? `/${slot.block}` : ""}`, cx, DAY_WIDTH, 650, regular, 4.1, muted);
+      drawCentered(page, day, cx, DAY_WIDTH, 650, regular, 4.1, muted);
     }
   }
   drawCentered(page, "T", totalX, TOTAL_WIDTH, 658, bold, 5.1);
@@ -185,7 +185,8 @@ export async function buildAttendanceRegisterPdf(summary: CourseRegisterSummary,
     page.drawText("T = P + tardanzas - una por cada tres tardanzas; % = T / días trabajados × 100. R se excluye desde la fecha del retiro.", {
       x: MARGIN, y: 108, size: 5.9, font: regular, color: muted,
     });
-    page.drawText("T y % quedan vacíos si falta registrar alguna sesión del mes.", { x: MARGIN, y: 97, size: 5.9, font: regular, color: muted });
+    page.drawText("Si asistió a un bloque y faltó a otro del mismo día, la marca oficial diaria es T.", { x: MARGIN, y: 97, size: 5.9, font: regular, color: muted });
+    page.drawText("T y % quedan vacíos si falta registrar algún bloque trabajado del mes.", { x: MARGIN, y: 86, size: 5.9, font: regular, color: muted });
     drawCentered(page, `${pageIndex + 1 + rosterSegments} / ${pagePairs.length + rosterSegments}`, 0, PAGE_WIDTH, 25, regular, 6, muted);
   });
 

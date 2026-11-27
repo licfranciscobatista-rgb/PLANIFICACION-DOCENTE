@@ -2,12 +2,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Save, Search, AlertCircle, LoaderCircle, Download, RotateCcw } from 'lucide-react';
 import { COMPETENCY_GROUPS, PERIOD_START } from '@/lib/model';
-import type { Activity, AttendanceMark, AttendanceView, ClassLessonType, Course, CourseRegisterSummary, GradesView, LessonType, PeriodSheetCaptureKey, SaveReceipt } from '@/lib/model';
+import type { Activity, AttendanceMark, AttendanceView, ClassLessonType, Course, CourseRegisterSummary, GradesView, LessonType, PeriodSheetCaptureKey, SaveReceipt, TeacherTimetable } from '@/lib/model';
 import { apiPost, downloadJson, errorText, useRemote } from '@/lib/client';
 import { AttendanceWorkbookImportPanel } from './attendance-workbook-import';
 import PeriodEvaluationPanel from './period-evaluation';
+import { suggestTeacherBlock } from '@/lib/timetable';
+import { isActivityEvaluationReady } from '@/lib/evaluation-readiness';
 
 const marks:[AttendanceMark,string][]=[['P','Presente'],['A','Ausente'],['T','Tardanza'],['E','Excusa'],['R','Retiro voluntario']];
+function schoolLocalTime(){const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'America/Santo_Domingo',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date());return `${parts.find(part=>part.type==='hour')?.value??'00'}:${parts.find(part=>part.type==='minute')?.value??'00'}`;}
 function Loader({error}:{error?:string}) {return error?<div className="notice warning" role="alert">{error}</div>:<div className="loading-state"><LoaderCircle className="spin"/> Cargando registros…</div>;}
 function useDraft<T>(key:string,initial:T,initialRevision:number){
   const [state,setState]=useState(()=>{
@@ -38,10 +41,27 @@ function DraftNotice({dirty,stale,onDiscard,onExport}:{dirty:boolean;stale:boole
   if(!dirty&&!stale)return null;
   return <div className={'notice '+(stale?'warning':'draft-notice')}><AlertCircle size={17}/><span>{stale?'Hay una versión más reciente en la base. Conserva el borrador antes de recargar.':'Cambios pendientes de enviar. El borrador se conserva al cambiar de apartado.'}</span><button className="text-button" onClick={onExport}><Download size={14}/> Borrador</button><button className="text-button" onClick={onDiscard}><RotateCcw size={14}/> Descartar</button></div>;
 }
-export function AttendancePanel({course,today,date,onDateChange,block,onBlockChange}:{course:Course;today:string;date:string;onDateChange:(value:string)=>void;block:number;onBlockChange:(value:number)=>void}){
-  const remote=useRemote<AttendanceView>('attendance',{courseId:course.id,date,block});
-  return <><div className="section-heading"><div><p className="eyebrow">REGISTRO DIARIO · {course.code}</p><h1>Registro de la clase</h1><p className="muted">Toma la asistencia y, en el mismo bloque, registra participación y comportamiento.</p></div><div className="toolbar"><label>Fecha<input type="date" min={PERIOD_START} value={date||today} onChange={e=>e.target.value&&onDateChange(e.target.value)}/></label><label>Bloque<select value={block} onChange={e=>onBlockChange(Number(e.target.value))}><option value={1}>Bloque 1</option><option value={2}>Bloque 2</option><option value={3}>Bloque 3</option><option value={4}>Bloque 4</option><option value={5}>Bloque 5</option><option value={6}>Bloque 6</option><option value={7}>Bloque 7</option><option value={8}>Bloque 8</option></select></label></div></div>
-  {remote.data?<AttendanceCapture key={course.id+date+block+remote.data.session.revision} initial={remote.data} courseCode={course.code} today={today} onReload={remote.reload} mode="attendance"/>:<Loader error={remote.error}/>}</>;
+export function AttendancePanel({course,today,date,onDateChange,block,onBlockChange,onConfigureSchedule}:{course:Course;today:string;date:string;onDateChange:(value:string)=>void;block:number;onBlockChange:(value:number)=>void;onConfigureSchedule?:()=>void}){
+  const timetable=useRemote<TeacherTimetable>('teacher-timetable');
+  const [clockTick,setClockTick]=useState(0);
+  const [manualBlockOpen,setManualBlockOpen]=useState(false);
+  const manualBlockFor=useRef('');
+  const dateKey=`${course.id}:${date}`;
+  useEffect(()=>{const timer=window.setInterval(()=>setClockTick(value=>value+1),60_000);return()=>window.clearInterval(timer);},[]);
+  const currentTime=schoolLocalTime();
+  const timetableEntries=timetable.data?.entries??[];
+  const suggestedBlock=suggestTeacherBlock(timetableEntries,course.id,date,today,currentTime);
+  const weekday=new Date(`${date}T12:00:00Z`).getUTCDay()||7;
+  const todaysEntries=timetableEntries.filter(entry=>entry.courseId===course.id&&entry.weekday===weekday);
+  const autoBlock=manualBlockFor.current===dateKey?null:suggestedBlock;
+  const selectedBlock=autoBlock??block;
+  const remote=useRemote<AttendanceView>('attendance',{courseId:course.id,date,block:selectedBlock});
+  useEffect(()=>{if(manualBlockFor.current===dateKey||suggestedBlock===null)return;onBlockChange(suggestedBlock);},[course.id,date,today,clockTick,timetable.data,onBlockChange,suggestedBlock]);
+  const blockHint=timetable.loading?'Revisando tu horario…':suggestedBlock!==null?`Bloque ${suggestedBlock} detectado por el horario docente.`:todaysEntries.length?`Este día tiene ${todaysEntries.length} bloques; se seleccionará automáticamente cuando la hora coincida.`:'No hay bloque configurado para este día.';
+  const chooseDate=(value:string)=>{if(value){manualBlockFor.current='';setManualBlockOpen(false);onDateChange(value);}};
+  const useDetectedBlock=()=>{manualBlockFor.current='';setManualBlockOpen(false);if(suggestedBlock!==null)onBlockChange(suggestedBlock);};
+  return <><div className="section-heading"><div><p className="eyebrow">REGISTRO DIARIO · {course.code}</p><h1>Registro de la clase</h1><p className="muted">Toma la asistencia y, en el mismo bloque, registra participación y comportamiento.</p></div><div className="toolbar attendance-session-controls"><label>Fecha<input type="date" min={PERIOD_START} value={date||today} onChange={e=>chooseDate(e.target.value)}/></label>{autoBlock!==null&&!manualBlockOpen?<div className="detected-block-control"><span><small>Bloque detectado</small><strong>Bloque {autoBlock}</strong></span><button type="button" className="text-button" onClick={()=>setManualBlockOpen(true)}>Cambiar</button></div>:<label>Bloque<select aria-label={`Bloque de ${course.code}`} value={selectedBlock} onChange={e=>{manualBlockFor.current=dateKey;setManualBlockOpen(true);onBlockChange(Number(e.target.value));}}>{(todaysEntries.length?todaysEntries.map(entry=>entry.block).filter((item,index,all)=>all.indexOf(item)===index):Array.from({length:12},(_,index)=>index+1)).map(value=><option key={value} value={value}>Bloque {value}</option>)}</select><small className="timetable-detection-hint">{blockHint}</small>{suggestedBlock!==null&&manualBlockFor.current===dateKey&&<button type="button" className="text-button use-timetable-button" onClick={useDetectedBlock}>Usar horario</button>}</label>}{onConfigureSchedule&&<button type="button" className="text-button configure-timetable-shortcut" onClick={onConfigureSchedule}>Configurar horario</button>}</div></div>
+  {remote.data?<AttendanceCapture key={course.id+date+selectedBlock+remote.data.session.revision} initial={remote.data} courseCode={course.code} today={today} onReload={remote.reload} mode="attendance"/>:<Loader error={remote.error}/>}</>;
 }
 export function AttendanceSummaryPanel({course,courses,demo,section}:{course:Course;courses:Course[];demo:boolean;section:'month'|'week'}){
   const [weekStart,setWeekStart]=useState('');
@@ -72,10 +92,10 @@ export function AttendanceSummaryPanel({course,courses,demo,section}:{course:Cou
       {selectedMonth?<>
         <div className="table-wrap monthly-register-table-wrap"><table className="data-table monthly-register-table">
           <caption>{data.course.code} · {selectedMonth.label} · {selectedMonth.taught} días trabajados; {selectedMonth.notTaught} no impartidos, fuera del conteo.</caption>
-          <thead><tr><th rowSpan={2}>N.º</th><th rowSpan={2}>Alumnos</th><th colSpan={selectedMonth.slots.length}>DÍAS TRABAJADOS</th><th rowSpan={2}>T</th><th rowSpan={2}>%</th></tr><tr>{selectedMonth.slots.map((slot,index)=><th key={`${slot.date}:${slot.block}`}><span>{index+1}</span><small>{monthDay(slot.date)}/{slot.date.slice(5,7)}{slot.block>1?` B${slot.block}`:''}</small></th>)}</tr></thead>
-          <tbody>{selectedMonth.rows.map(row=><tr key={row.student.id}><td className="row-number">{String(row.student.number).padStart(2,'0')}</td><td className="student-name">{row.student.name}</td>{selectedMonth.slots.map((slot,index)=>{const mark=row.marks[index];return <td key={`${slot.date}:${slot.block}`} className={'register-mark'+(mark?' register-mark-'+mark:'')}>{mark??'—'}</td>})}<td>{row.pending===0?<strong>{row.totalAttendance}</strong>:'Pend.'}</td><td>{row.attendancePercent===null?'—':row.attendancePercent+'%'}</td></tr>)}</tbody>
+          <thead><tr><th rowSpan={2}>N.º</th><th rowSpan={2}>Alumnos</th><th colSpan={selectedMonth.slots.length}>DÍAS TRABAJADOS · UNA MARCA POR FECHA</th><th rowSpan={2}>T</th><th rowSpan={2}>%</th></tr><tr>{selectedMonth.slots.map((slot,index)=><th key={slot.date}><span>{index+1}</span><small>{monthDay(slot.date)}/{slot.date.slice(5,7)}</small></th>)}</tr></thead>
+          <tbody>{selectedMonth.rows.map(row=><tr key={row.student.id}><td className="row-number">{String(row.student.number).padStart(2,'0')}</td><td className="student-name">{row.student.name}</td>{selectedMonth.slots.map((slot,index)=>{const mark=row.marks[index];return <td key={slot.date} className={'register-mark'+(mark?' register-mark-'+mark:'')}>{mark??'—'}</td>})}<td>{row.pending===0?<strong>{row.totalAttendance}</strong>:'Pend.'}</td><td>{row.attendancePercent===null?'—':row.attendancePercent+'%'}</td></tr>)}</tbody>
         </table></div>
-        <p className="monthly-register-legend">P = presente · A = ausencia · T = tardanza · E = excusa · R = retiro voluntario desde esa fecha. Tres tardanzas equivalen a una ausencia; E cuenta como día trabajado sin sumar asistencia y R sale del denominador. T y % quedan pendientes si falta una marca.</p>
+        <p className="monthly-register-legend">P = presente · A = ausencia · T = tardanza · E = excusa · R = retiro voluntario desde esa fecha. Si un estudiante asistió a un bloque y faltó a otro el mismo día, el registro oficial muestra T; el detalle por bloque se conserva en el resumen semanal. Tres tardanzas equivalen a una ausencia. T y % quedan pendientes si falta una marca.</p>
         <p className="monthly-register-signature">Firma del docente: ___________________________________________ <span>Fecha: __________________</span></p>
       </>:<div className="empty-state">No hay sesiones impartidas para imprimir en este curso.</div>}
     </section>}
@@ -194,18 +214,18 @@ function AttendanceCapture({initial,courseCode,today,onReload,mode}:{initial:Att
 }
 export function GradesPanel({mode,course,activities,selectedActivityId,period,onOpenActivities,onConfigureActivity,onOpenPlan}:{mode:'activities'|'quick';course:Course;activities:Activity[];selectedActivityId?:string;period:string;onOpenActivities:()=>void;onConfigureActivity:(activityId:string,courseId:string)=>void;onOpenPlan:()=>void}){
   const [quickCapture,setQuickCapture]=useState<PeriodSheetCaptureKey|null>(null);
-  const list=activities.filter(a=>a.courseId===course.id&&(a.scoringMode==='rubric'?a.indicatorPoints.length>0&&a.rubric.length>0:Boolean(a.instrument.trim()||a.indicatorPoints.length)));
+  const list=activities.filter(a=>a.courseId===course.id&&(a.activeForGrading??true)&&isActivityEvaluationReady(a));
   const sameCategoryActivityCount=quickCapture&&quickCapture!=='discipline'?list.filter(activity=>activity.period===period&&activity.category===(quickCapture==='participation'?'participation':quickCapture)).length:0;
   const [selected,setSelected]=useState(selectedActivityId||list[0]?.id||'');useEffect(()=>{if(selectedActivityId)setSelected(selectedActivityId);},[selectedActivityId]);const id=list.some(a=>a.id===selected)?selected:list[0]?.id||'';
   const remote=useRemote<GradesView>('grades',{activityId:id},mode==='activities'&&Boolean(id));
-  return <><div className="section-heading"><div><p className="eyebrow">{mode==='quick'?'CAPTURA DIRECTA':'EVALUACIÓN'}</p><h1>{mode==='quick'?'Calificar':'Actividades preparadas'}</h1><p className="muted">{mode==='quick'?'Elige una categoría para abrir su lista de estudiantes. La captura se guarda en el período activo.':'Evalúa aquí las actividades ya preparadas; su configuración se conserva.'}</p></div></div>
+  return <><div className="section-heading"><div><p className="eyebrow">{mode==='quick'?'CAPTURA DIRECTA':'EVALUACIÓN'}</p><h1>{mode==='quick'?'Calificar':'Calificar actividad'}</h1><p className="muted">{mode==='quick'?'Elige una categoría para abrir su lista de estudiantes. La captura se guarda en el período activo.':`La actividad se prepara una vez para ${course.code}. Aquí calificas a toda la lista del curso en una sola matriz; no se crea una actividad por estudiante.`}</p></div></div>
   {mode==='quick'?<>
     <div className="panel quick-capture-menu"><div className="section-heading"><div><h2>¿Qué vas a calificar?</h2><p className="muted">Cada botón abre una captura separada para el curso seleccionado.</p></div></div><div className="toolbar quick-capture-buttons" role="tablist" aria-label="Capturas directas">
       {([['participation','Participación'],['discipline','Disciplina'],['exam','Examen'],['notebook','Libreta']] as [PeriodSheetCaptureKey,string][]).map(([key,label])=><button key={key} type="button" role="tab" aria-selected={quickCapture===key} className={'button '+(quickCapture===key?'primary':'secondary')} onClick={()=>setQuickCapture(key)}>{label}</button>)}
     </div></div>
     {quickCapture?<PeriodEvaluationPanel courses={[course]} period={period} captureType={quickCapture} sameCategoryActivityCount={sameCategoryActivityCount} onOpenPlan={onOpenPlan}/>:<div className="empty-state"><h2>Selecciona qué vas a calificar</h2><p>Las actividades preparadas están aparte y no se cambian desde estas capturas.</p></div>}
   </>:<>
-  {list.length>0&&<div className="panel activity-selector"><label>Actividad preparada<select value={id} onChange={e=>setSelected(e.target.value)}>{list.map(a=><option value={a.id} key={a.id}>{a.date+' · '+(a.sequenceCode?a.sequenceCode+' · ':'')+a.title+' / '+a.maxPoints}</option>)}</select></label><p className="muted">Guardar notas conserva la asistencia y el estado de la clase.</p></div>}
+  {list.length>0&&<div className="panel activity-selector"><label>Actividad preparada para {course.code}<select value={id} onChange={e=>setSelected(e.target.value)}>{list.map(a=><option value={a.id} key={a.id}>{a.date+' · '+(a.sequenceCode?a.sequenceCode+' · ':'')+a.title+' / '+a.maxPoints}</option>)}</select></label><p className="muted">Esta actividad corresponde al curso completo. Al abrirla verás una fila por estudiante y podrás guardar las notas del grupo juntas.</p></div>}
     {!id?<div className="empty-state"><h2>No hay actividades listas para calificar</h2><p>Una actividad aparece aquí cuando ya está asignada y configurada.</p><button className="button secondary" onClick={onOpenActivities}>Revisar Actividades</button></div>:remote.data?<GradeCapture key={id+remote.data.activity.revision} initial={remote.data} course={course} onOpenActivities={onOpenActivities} onConfigureActivity={onConfigureActivity}/>:<Loader error={remote.error}/>}</>}
   </>;
 }
@@ -227,6 +247,7 @@ function GradeCapture({initial,course,onOpenActivities,onConfigureActivity}:{ini
   }
   async function save(){setSaving(true);setError('');setMessage('');try{const receipt=await apiPost<SaveReceipt>('grades',{activityId:activity.id,revision:draft.revision,requestId:draft.operation(),rows:draft.value.map(({studentId,score,criterionLevels,comment})=>({studentId,score,criterionLevels,comment}))});draft.saved(receipt.revision);setMessage('Calificaciones guardadas · '+receipt.savedRows+' estudiantes · comprobante '+receipt.operationId.slice(0,8));}catch(e){setError(errorText(e));}finally{setSaving(false);}}
   return <>
+    <div className="notice course-grade-scope"><strong>{course.code} · {draft.value.length} estudiantes en esta lista</strong><span>Una sola actividad para el curso. Califica cada estudiante en esta matriz; puedes guardar el avance del grupo sin crear actividades individuales.</span></div>
     <div className="metrics compact">
       <div className="metric"><span>Calificados</span><strong>{draft.value.filter(r=>r.score!==null).length}</strong></div>
       <div className="metric"><span>Pendientes</span><strong>{draft.value.filter(r=>r.score===null).length}</strong></div>
@@ -256,7 +277,7 @@ function GradeCapture({initial,course,onOpenActivities,onConfigureActivity}:{ini
         </div>
       </fieldset>
     </section>
-    <div className="save-bar"><span>Los cambios se aplican únicamente a <strong>{activity.title}</strong>.</span><button className="button primary" onClick={save} disabled={saving||draft.stale}>{saving?<LoaderCircle className="spin" size={17}/>:<Save size={17}/>} {saving?'Guardando…':'Guardar calificaciones'}</button></div>
+    <div className="save-bar"><span>Una actividad para {course.code}; este guardado incluye las {draft.value.length} filas de la lista. Los cambios se aplican únicamente a <strong>{activity.title}</strong>.</span><button className="button primary" onClick={save} disabled={saving||draft.stale}>{saving?<LoaderCircle className="spin" size={17}/>:<Save size={17}/>} {saving?'Guardando…':'Guardar notas del curso'}</button></div>
     {error&&<div className="notice warning" role="alert">{error}</div>}{message&&<div className="notice success" role="status"><Check size={17}/>{message}</div>}
   </>;
 }

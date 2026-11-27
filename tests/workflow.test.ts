@@ -430,7 +430,7 @@ test('el calendario distingue clases previstas, no impartidas, días fuera de ho
   assert.equal((await service.attendance(actor, course.id, '2027-01-21', 1)).session.status, 'no_programada');
 });
 
-test('el registro mensual conserva los bloques, aplica tres tardanzas por ausencia y excluye clases no impartidas', async () => {
+test('el registro mensual mantiene una columna por día, aplica tres tardanzas por ausencia y excluye clases no impartidas', async () => {
   const { actor, course } = await caseContext('monthly-register');
   const dates = ['2026-10-20','2026-10-21','2026-10-22','2026-10-23'];
   for (const [day,date] of dates.entries()) {
@@ -458,6 +458,26 @@ test('el registro mensual conserva los bloques, aplica tres tardanzas por ausenc
   const excused = october.rows.find(row=>row.student.id===course.students[1].id)!;
   assert.equal(excused.excused,4);
   assert.equal(excused.attendancePercent,0,'las excusas se conservan como no asistencia y el día trabajado permanece en el denominador');
+});
+
+test('el registro oficial consolida dos bloques en una marca diaria: presente y ausente se resume como tardanza',async()=>{
+  const {actor,course}=await caseContext('two-blocks-one-official-day');
+  const date='2026-10-20';
+  await service.saveAttendance(actor,attendanceInput(course,{date,block:1,rows:course.students.map(student=>({studentId:student.id,status:'P',behavior:7}))}));
+  await service.saveAttendance(actor,attendanceInput(course,{date,block:2,rows:course.students.map((student,index)=>({studentId:student.id,status:index===0?'A':'P',behavior:index===0?null:7}))}));
+  const summary=await service.registerSummary(actor,course.id);
+  const october=summary.months.find(month=>month.key==='2026-10')!;
+  const dailyIndex=october.slots.findIndex(slot=>slot.date===date);
+  assert.notEqual(dailyIndex,-1,'el día impartido aparece una sola vez en el registro mensual');
+  assert.equal(october.slots.filter(slot=>slot.date===date).length,1,'dos bloques no crean dos columnas ministeriales');
+  assert.equal(october.taught,1,'el conteo mensual del registro formal cuenta días, no bloques');
+  const partial=october.rows.find(row=>row.student.id===course.students[0]!.id)!;
+  assert.equal(partial.marks[dailyIndex],'T','asistir al primer bloque y faltar al segundo queda como tardanza en el registro diario');
+  assert.equal(partial.late,1);
+  const present=october.rows.find(row=>row.student.id===course.students[1]!.id)!;
+  assert.equal(present.marks[dailyIndex],'P','asistir a los dos bloques cuenta una vez como presente en el informe oficial');
+  assert.equal(present.present,1);
+  assert.deepEqual(summary.sessions.filter(session=>session.date===date).map(session=>session.block),[1,2],'el historial interno conserva el detalle por bloque');
 });
 
 test('la hoja ministerial PDF conserva filas numeradas, dos meses por página y el conteo semanal', async () => {

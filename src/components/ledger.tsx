@@ -18,13 +18,13 @@ const categoryNames: Record<TeacherLedgerColumn["category"], string> = {
   discipline: "Disciplina",
 };
 
-export default function TeacherLedgerPanel() {
+export default function TeacherLedgerPanel({courseId,courseCode}:{courseId?:string;courseCode?:string}) {
   const [period, setPeriod] = useState<string>();
-  const remote = useRemote<TeacherLedgerSummary>("teacher-ledger", period ? { period } : {});
+  const remote = useRemote<TeacherLedgerSummary>("teacher-ledger", { ...(period?{period}:{}), ...(courseId?{courseId}:{}) });
   const [course, setCourse] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const courses = useMemo(() => [...new Map((remote.data?.rows ?? []).map(row => [row.course.id, row.course])).values()], [remote.data]);
-  const selectedCourse = course ?? courses[0]?.id ?? "all";
+  const selectedCourse = courseId ?? course ?? courses[0]?.id ?? "all";
   const selectedPeriod = period ?? remote.data?.period ?? "P2";
   const rows = useMemo(() => (remote.data?.rows ?? []).filter(row =>
     (selectedCourse === "all" || row.course.id === selectedCourse) &&
@@ -51,14 +51,14 @@ export default function TeacherLedgerPanel() {
 
   return <>
     <div className="section-heading">
-      <div><p className="eyebrow">REGISTRO DOCENTE · {selectedPeriod}</p><h1>Libro de calificaciones</h1><p className="muted">Notas del período y sus columnas de evaluación.</p></div>
+      <div><p className="eyebrow">{courseId?`MATRIZ DEL CURSO · ${courseCode??''}`:'REGISTRO DOCENTE'} · {selectedPeriod}</p><h1>{courseId?`Matriz de ${courseCode??'este curso'}`:'Libro de calificaciones'}</h1><p className="muted">Estudiantes en filas, evidencias y criterios en columnas; los resultados se resumen al final de cada fila.</p></div>
       <button className="button secondary" disabled={!remote.data} onClick={() => remote.data && downloadJson(`libro-${selectedCourse}-${remote.data.period}.json`, { ...remote.data, groups, rows })}><Download size={17}/> Descargar vista</button>
     </div>
     <div className="notice">{remote.data?.directPlan?.enabled&&!legacyDirectPlan?'El cuadro directo y las actividades llegan a la misma matriz. Cada categoría directa aparece una sola vez; las actividades de esa categoría se guardan como evidencia sin duplicar puntos.':'El resumen convierte las categorías a los puntos del período. Las categorías agrupadas se suman en una columna y conservan el desglose. Los puntos extra se agregan aparte; abajo están las actividades, criterios y competencias.'}</div>
     <section className="panel ledger-panel">
       <div className="table-toolbar ledger-toolbar">
         <div className="search-field"><Search size={17}/><input aria-label="Buscar en libro general" placeholder="Buscar estudiante…" value={search} onChange={event=>setSearch(event.target.value)}/></div>
-        <label>Curso<select aria-label="Filtrar curso" value={selectedCourse} onChange={event=>setCourse(event.target.value)}><option value="all">Todos los cursos</option>{courses.map(item=><option value={item.id} key={item.id}>{item.code}</option>)}</select></label>
+        {!courseId&&<label>Curso<select aria-label="Filtrar curso" value={selectedCourse} onChange={event=>setCourse(event.target.value)}><option value="all">Todos los cursos</option>{courses.map(item=><option value={item.id} key={item.id}>{item.code}</option>)}</select></label>}
         <label>Período<select aria-label="Período de calificaciones" value={selectedPeriod} onChange={event=>setPeriod(event.target.value)}>{(remote.data?.availablePeriods??[selectedPeriod]).map(item=><option key={item} value={item}>{item}</option>)}</select></label>
         <span className="pill">{rows.length} estudiantes</span>
       </div>
