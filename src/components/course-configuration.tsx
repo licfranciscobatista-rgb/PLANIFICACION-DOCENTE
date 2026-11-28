@@ -1,26 +1,24 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CheckCircle2, ClipboardCheck, GraduationCap, Settings2 } from 'lucide-react';
+import { CheckCircle2, GraduationCap, Settings2 } from 'lucide-react';
 import type { Activity, Bootstrap, EvaluationPeriodKey, EvaluationPlan, EvaluationCriterion, SequencePlan } from '@/lib/model';
 import { apiPost, errorText } from '@/lib/client';
 import { ActivityEvaluationEditor } from './activity-workspace';
-import TeacherTimetablePanel from './teacher-timetable';
 import { isActivityEvaluationReady } from '@/lib/evaluation-readiness';
 
 const periods: EvaluationPeriodKey[] = ['P1', 'P2', 'P3', 'P4'];
 const emptySequence: SequencePlan = { source: 'manual', sourceName: '', sourceText: '', reviewed: false, activities: [], indicators: [] };
 
-export default function CourseConfigurationPanel({ courses, activities, plan, sequence, criteriaCatalog, initialCourseId, initialTab='evaluations', activityToConfigure, onConsumeActivityRequest, onChange, onConfigurePlan, onGrade, onOpenActivities }: {
+export default function CourseConfigurationPanel({ courses, activities, plan, sequence, criteriaCatalog, initialCourseId, activityToConfigure, onConsumeActivityRequest, onChange, onConfigurePlan, onGrade, onOpenActivities }: {
   courses: Bootstrap['courses']; activities: Activity[]; plan: EvaluationPlan; sequence: SequencePlan | null;
-  criteriaCatalog: EvaluationCriterion[]; initialCourseId?: string; initialTab?: 'evaluations'|'schedule'; activityToConfigure?: string | null;
+  criteriaCatalog: EvaluationCriterion[]; initialCourseId?: string; activityToConfigure?: string | null;
   onConsumeActivityRequest?: () => void; onChange: () => void; onConfigurePlan: (period: string) => void;
   onGrade: (activityId: string, courseId: string) => void; onOpenActivities: (courseId?: string) => void;
 }) {
   const [courseId, setCourseId] = useState(initialCourseId || courses[0]?.id || '');
   const [contentPart, setContentPart] = useState('all');
   const [period, setPeriod] = useState<EvaluationPeriodKey>(periods.includes(plan.period as EvaluationPeriodKey) ? plan.period as EvaluationPeriodKey : 'P1');
-  const [activeTab, setActiveTab] = useState<'evaluations' | 'schedule'>(initialTab);
   const [configureActivityId, setConfigureActivityId] = useState<string | null>(null);
   const [gradingBusyId, setGradingBusyId] = useState<string | null>(null);
   const [gradingError, setGradingError] = useState('');
@@ -37,7 +35,6 @@ export default function CourseConfigurationPanel({ courses, activities, plan, se
       if (target.courseId) setCourseId(target.courseId);
       if (periods.includes(target.period as EvaluationPeriodKey)) setPeriod(target.period as EvaluationPeriodKey);
       setContentPart(target.sequencePlannedPeriod && periods.includes(target.sequencePlannedPeriod as EvaluationPeriodKey) ? target.sequencePlannedPeriod : 'all');
-      setActiveTab('evaluations');
       setConfigureActivityId(target.id);
     }
     onConsumeActivityRequest?.();
@@ -58,7 +55,6 @@ export default function CourseConfigurationPanel({ courses, activities, plan, se
   function chooseCourse(id: string) {
     setCourseId(id);
     setConfigureActivityId(null);
-    setActiveTab('evaluations');
   }
 
   async function setIncludedForGrading(activity: Activity, active: boolean) {
@@ -84,12 +80,6 @@ export default function CourseConfigurationPanel({ courses, activities, plan, se
     </section>
 
     {course && <>
-      <div className="course-config-subnav" role="tablist" aria-label={`Configuración de ${course.code}`}>
-        <button type="button" role="tab" aria-selected={activeTab === 'evaluations'} className={activeTab === 'evaluations' ? 'selected' : ''} onClick={() => setActiveTab('evaluations')}><ClipboardCheck size={16}/> Evaluaciones</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'schedule'} className={activeTab === 'schedule' ? 'selected' : ''} onClick={() => setActiveTab('schedule')}><CalendarClock size={16}/> Horario de bloques</button>
-      </div>
-
-      {activeTab === 'evaluations' ? <>
         <section className="panel course-config-period-section" aria-label="Elegir parte del año y período de evaluación">
           <div className="course-config-selectors">
             <label>Parte del año escolar / contenido de la secuencia
@@ -120,7 +110,6 @@ export default function CourseConfigurationPanel({ courses, activities, plan, se
         </section>
 
         {configuring && <ActivityEvaluationEditor key={`${configuring.id}-${configuring.revision}`} activity={configuring} sequence={sequence ?? emptySequence} criteria={criteriaCatalog} courseCode={course.code} linkedCourses={linkedCourseOptions} onClose={() => setConfigureActivityId(null)} onSaved={() => { setConfigureActivityId(null); onChange(); }}/ >}
-      </> : <section className="panel course-config-timetable"><TeacherTimetablePanel courses={courses} selectedCourseId={course.id}/></section>}
     </>}
   </>;
 }
